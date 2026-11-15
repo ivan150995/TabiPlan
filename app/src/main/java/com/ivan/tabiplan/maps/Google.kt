@@ -51,6 +51,11 @@ data class TransitStep(
     val stops: Int,
     val departs: String,
     val minutes: Int,
+    /** Km aproximados del tramo, para estimar la tarifa cuando la fuente no la da. */
+    val km: Double = 0.0,
+    /** Tren con cargo extra (特急 limited express: N'EX, Skyliner, Haruka…). */
+    val express: Boolean = false,
+    val highSpeed: Boolean = false,
 )
 
 data class RouteResult(
@@ -64,6 +69,10 @@ data class RouteResult(
     val polyline: List<LatLngD> = emptyList(),
     /** true = calculado por la app (sin Google), solo aproximado. */
     val estimated: Boolean = false,
+    /** De dónde salió la ruta: "google", "transitous" o "estimate". */
+    val source: String = if (estimated) "estimate" else "google",
+    /** true = la tarifa la calculó la app (la fuente no la da). */
+    val fareEstimated: Boolean = false,
 )
 
 data class Money(val amount: Double, val currency: String) {

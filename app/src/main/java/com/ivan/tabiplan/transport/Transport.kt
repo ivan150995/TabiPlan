@@ -6,6 +6,8 @@ import com.ivan.tabiplan.maps.LatLngD
 import com.ivan.tabiplan.maps.Mode
 import com.ivan.tabiplan.maps.Money
 import com.ivan.tabiplan.maps.RouteResult
+import com.ivan.tabiplan.maps.TransitStep
+import com.ivan.tabiplan.maps.Transitous
 import com.ivan.tabiplan.maps.haversineKm
 import kotlin.math.ceil
 import kotlin.math.max
@@ -24,6 +26,9 @@ data class LegOptions(
     val usedGoogle: Boolean,
     val googleError: String? = null,
 ) {
+    /** "google", "transitous" o "estimate". */
+    val transitSource: String get() = transit.firstOrNull()?.source ?: "estimate"
+
     /** Tarifa del transporte público: la de Google o la estimada. */
     fun transitFare(country: Country): Money? = transit.firstOrNull()?.fare ?: transit.firstOrNull()?.let {
         Fares.transitEstimate(country, it.meters / 1000.0)
@@ -73,6 +78,40 @@ object Fares {
             "JPY",
         )
         Country.MX -> Money(if (km <= 12) 5.0 else 11.0, "MXN")
+    }
+
+    /**
+     * Tarifa estimada de una ruta tramo por tramo: cada operador cobra aparte (JR, metro, privados),
+     * los tramos seguidos del mismo operador se cobran juntos, y los trenes expresos y el Shinkansen
+     * suman su cargo. Es aproximada: la exacta está en Google Maps.
+     */
+    fun stepsFare(country: Country, steps: List<TransitStep>): Money? {
+        if (steps.isEmpty()) return null
+        var total = 0.0
+        var i = 0
+        while (i < steps.size) {
+            val agency = steps[i].agency
+            var km = 0.0
+            var surcharge = 0.0
+            var bus = true
+            while (i < steps.size && steps[i].agency == agency) {
+                val s = steps[i]
+                km += s.km
+                if (s.vehicleType != "BUS" && s.vehicleType != "COACH") bus = false
+                if (country == Country.JP) {
+                    if (s.highSpeed) surcharge += 2000 + s.km * 8
+                    else if (s.express) surcharge += 1000 + s.km * 10
+                }
+                i++
+            }
+            total += when {
+                bus && country == Country.JP -> 220.0
+                bus -> 10.0
+                else -> transitEstimate(country, km).amount
+            } + surcharge
+        }
+        val cur = if (country == Country.JP) "JPY" else "MXN"
+        return Money(if (country == Country.JP) ceil(total / 10) * 10 else total, cur)
     }
 
     /** Taxi y apps de viaje. Precios de referencia, sin tarifa dinámica. */
@@ -133,18 +172,26 @@ object Fares {
         var transit = listOf(transitEstimate(from, to, country))
         var drive = driveEstimate(from, to, country)
         var usedGoogle = false
+        var googleTransit = false
         if (maps.hasKey) {
             runCatching {
                 maps.route(from, to, Mode.WALK).firstOrNull()?.let { walk = it }
                 // Google no entrega rutas de transporte público de Japón a apps (sí en México):
-                // ahí se usa el estimado y el botón de Google Maps muestra los trenes reales.
+                // en Japón ni se pide, se usa Transitous.
                 if (country != Country.JP) {
                     val t = maps.route(from, to, Mode.TRANSIT, departureEpochSec)
-                    if (t.isNotEmpty()) transit = t.sortedBy { it.minutes }
+                    if (t.isNotEmpty()) { transit = t.sortedBy { it.minutes }; googleTransit = true }
                 }
                 maps.route(from, to, Mode.DRIVE).firstOrNull()?.let { drive = it }
                 usedGoogle = true
             }.onFailure { error = it.message }
+        }
+        // Transporte público con Transitous (Japón siempre; México si Google no dio ruta o no hay clave).
+        // Si no está cerca (< 700 m caminando no vale la pena) o falla, se queda el estimado.
+        if (!googleTransit && walk.meters > 700) {
+            runCatching { Transitous.plan(from, to, country, departureEpochSec) }.getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { list -> transit = list.map { it.copy(fare = stepsFare(country, it.steps), fareEstimated = true) } }
         }
         val rides = rides(country, drive, hour)
         val (mode, reason) = recommend(country, walk, transit.firstOrNull(), drive, rides, travelers, hour)

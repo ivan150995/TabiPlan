@@ -62,6 +62,9 @@ import com.ivan.tabiplan.Screen
 import com.ivan.tabiplan.data.Country
 import com.ivan.tabiplan.data.Place
 import com.ivan.tabiplan.data.PlaceKind
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Map
+import com.ivan.tabiplan.maps.Transitous
 import com.ivan.tabiplan.data.Trip
 import com.ivan.tabiplan.maps.LatLngD
 import com.ivan.tabiplan.maps.Mode
@@ -224,7 +227,10 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
                 Text(o.reason, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        if (!o.usedGoogle) Muted(if (o.googleError != null) "Google no respondió (${o.googleError}); tiempos y precios son estimados." else "Tiempos y precios estimados por distancia. Con clave de Google Maps verás líneas, estaciones y tarifas reales.")
+        if (!o.usedGoogle) Muted(
+            if (o.googleError != null) "Google no respondió (${o.googleError}); caminando y en auto son estimados."
+            else "Caminando y en auto: estimados por distancia. Con clave de Google Maps son tiempos reales con tráfico."
+        )
 
         // Caminando (solo si es razonable: hasta ~1 h)
         val walkable = o.walk.minutes <= 60 || o.recommended == Mode.WALK
@@ -233,14 +239,29 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
         val t = o.transit.firstOrNull()
         if (t != null) {
             val fare = o.transitFare(trip.country)
-            val fareText = fare?.let { f -> (if (t.fare == null) "≈ " else "") + f.withMxn(rate, showMxn) + if (trip.travelers > 1) " c/u" else "" } ?: "precio no disponible"
+            val fareText = fare?.let { f -> (if (t.fare == null || t.fareEstimated) "≈ " else "") + f.withMxn(rate, showMxn) + if (trip.travelers > 1) " c/u" else "" } ?: "precio no disponible"
             OptionHeader(Icons.Default.Train, "Transporte público", "${minutesText(t.minutes)} · $fareText", o.recommended == Mode.TRANSIT)
             TransitSteps(t)
-            if (t.estimated && o.usedGoogle) Muted(
-                if (trip.country == Country.JP) "En Japón Google no da a las apps las rutas de tren y metro: tiempo y precio estimados. Toca \"Ir con Google Maps\" para ver líneas y horarios reales."
-                else "Google no encontró ruta de transporte público: tiempo y precio estimados."
-            )
-            if (o.transit.size > 1) Muted("+${o.transit.size - 1} ruta(s) alternativa(s) en Google Maps.")
+            when (o.transitSource) {
+                "transitous" -> {
+                    o.transit.drop(1).forEach { alt ->
+                        Muted("Otra opción: ${minutesText(alt.minutes)} · ${(alt.steps.size - 1).let { if (it == 0) "directo" else "$it transbordo(s)" }} · " +
+                            alt.steps.joinToString(" → ") { it.line.substringAfterLast("(").removeSuffix(")").take(14) })
+                    }
+                    Muted("Horarios programados; el precio es estimado por distancia (el exacto, en Google Maps).")
+                    Text(
+                        "Rutas: Transitous · datos de los operadores y © OpenStreetMap",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { ctx.openUrl(Transitous.SOURCES_URL) }.padding(vertical = 2.dp),
+                    )
+                }
+                "estimate" -> Muted("No se pudo obtener la ruta de transporte público: tiempo y precio estimados por distancia.")
+                else -> if (o.transit.size > 1) Muted("+${o.transit.size - 1} ruta(s) alternativa(s) en Google Maps.")
+            }
+            OutlinedButton(onClick = { ctx.openUrl(mapsUrl(from, to, Mode.TRANSIT)) }) {
+                Icon(Icons.Default.Map, null); HSpace(4); Text("Ver ruta y precios en Google Maps")
+            }
         }
         // Taxi y apps
         OptionHeader(Icons.Default.LocalTaxi, "Taxi / apps", "${minutesText(o.drive.minutes)} en auto · ${"%.1f".format(o.drive.meters / 1000.0)} km", o.recommended == Mode.DRIVE)
@@ -307,7 +328,7 @@ private fun TransitSteps(r: RouteResult) {
                 HSpace()
                 Column {
                     Text("${s.vehicle.ifBlank { "Línea" }} ${s.line}" + if (s.departs.isNotBlank()) " · sale ${s.departs}" else "", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Muted("${s.from} → ${s.to}" + (if (s.headsign.isNotBlank()) " (dir. ${s.headsign})" else "") + " · ${s.stops} paradas · ${s.minutes} min")
+                    Muted("${s.from} → ${s.to}" + (if (s.headsign.isNotBlank()) " (dir. ${s.headsign})" else "") + " · ${s.stops} parada${if (s.stops == 1) "" else "s"} · ${s.minutes} min")
                 }
             }
         }
@@ -323,7 +344,7 @@ private fun mapsUrl(from: Point, to: Point, mode: Mode): String {
 private fun summary(o: LegOptions, trip: Trip, rate: Double): String = buildString {
     appendLine("- Caminando: ${o.walk.minutes} min, ${o.walk.meters} m")
     o.transit.firstOrNull()?.let { t ->
-        appendLine("- Transporte público: ${t.minutes} min, tarifa ${o.transitFare(trip.country)?.format() ?: "?"}" + if (t.fare == null) " (estimada)" else "")
+        appendLine("- Transporte público: ${t.minutes} min, tarifa ${o.transitFare(trip.country)?.format() ?: "?"}" + if (t.fare == null || t.fareEstimated) " (estimada)" else "")
         t.steps.forEach { s -> appendLine("   · ${s.vehicle} ${s.line} (${s.agency}) de ${s.from} a ${s.to}, ${s.stops} paradas") }
     }
     appendLine("- Auto: ${o.drive.minutes} min, ${o.drive.meters} m")

@@ -236,6 +236,10 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
             val fareText = fare?.let { f -> (if (t.fare == null) "≈ " else "") + f.withMxn(rate, showMxn) + if (trip.travelers > 1) " c/u" else "" } ?: "precio no disponible"
             OptionHeader(Icons.Default.Train, "Transporte público", "${minutesText(t.minutes)} · $fareText", o.recommended == Mode.TRANSIT)
             TransitSteps(t)
+            if (t.estimated && o.usedGoogle) Muted(
+                if (trip.country == Country.JP) "En Japón Google no da a las apps las rutas de tren y metro: tiempo y precio estimados. Toca \"Ir con Google Maps\" para ver líneas y horarios reales."
+                else "Google no encontró ruta de transporte público: tiempo y precio estimados."
+            )
             if (o.transit.size > 1) Muted("+${o.transit.size - 1} ruta(s) alternativa(s) en Google Maps.")
         }
         // Taxi y apps

@@ -173,7 +173,15 @@ class TravelAi(private val settings: Settings) {
         )
     }
 
-    private fun effort(e: OutputConfig.Effort) = OutputConfig.builder().effort(e).build()
+    private fun effort(e: OutputConfig.Effort) = OutputConfig.builder().effort(pick(e)).build()
+
+    /** Nivel elegido en Ajustes; en "Automático" se queda el de cada tarea. */
+    private fun pick(default: OutputConfig.Effort): OutputConfig.Effort = when (settings.effort) {
+        "low" -> OutputConfig.Effort.LOW
+        "medium" -> OutputConfig.Effort.MEDIUM
+        "high" -> OutputConfig.Effort.HIGH
+        else -> default
+    }
 
     // ---------------------------------------------------------------------------------------------
     // 2) Armar el itinerario
@@ -218,7 +226,7 @@ class TravelAi(private val settings: Settings) {
         val msg = run {
             it.addUserMessage(prompt)
                 .outputConfig(
-                    OutputConfig.builder().effort(OutputConfig.Effort.MEDIUM)
+                    OutputConfig.builder().effort(pick(OutputConfig.Effort.MEDIUM))
                         .format(JsonOutputFormat.builder().schema(itinerarySchema()).build()).build(),
                 )
         }

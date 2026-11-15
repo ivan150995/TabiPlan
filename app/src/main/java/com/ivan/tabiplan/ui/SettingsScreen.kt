@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import com.ivan.tabiplan.AppDeps
 import com.ivan.tabiplan.BuildConfig
 import com.ivan.tabiplan.Nav
+import androidx.compose.material3.MaterialTheme
+import com.ivan.tabiplan.data.AiEffort
 import com.ivan.tabiplan.data.AiModel
 
 @Composable
@@ -37,7 +39,8 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
     var claude by remember { mutableStateOf(s.claudeKey) }
     var maps by remember { mutableStateOf(s.mapsKey) }
     var model by remember { mutableStateOf(s.model) }
-    var rate by remember { mutableStateOf(s.mxnPerJpy.toString()) }
+    var effort by remember { mutableStateOf(s.effort) }
+    var rate by remember { mutableStateOf("%.4f".format(java.util.Locale.US, s.mxnPerJpy).trimEnd('0').trimEnd('.')) }
     var showMxn by remember { mutableStateOf(s.showMxn) }
     Scaffold(topBar = { BackBar("Ajustes", { nav.back() }) }) { pad ->
         Column(
@@ -49,16 +52,25 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
                 Muted("Investiga lugares, arma itinerarios, busca hoteles y responde preguntas con búsqueda web. Crea la clave en platform.claude.com → API keys. Se guarda solo en este teléfono.")
                 OutlinedTextField(claude, { claude = it }, label = { Text("Clave de la API de Claude") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Text("Modelo", style = MaterialTheme.typography.titleSmall)
                 AiModel.entries.forEach { m ->
                     Row(Modifier.clickable { model = m.id }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(model == m.id, { model = m.id })
                         Column { Text(m.label); Muted(m.note) }
                     }
                 }
+                Text("Esfuerzo", style = MaterialTheme.typography.titleSmall)
+                AiEffort.entries.forEach { e ->
+                    Row(Modifier.clickable { effort = e.id }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(effort == e.id, { effort = e.id })
+                        Column { Text(e.label); Muted(e.note) }
+                    }
+                }
+                Muted("Las búsquedas web también cuestan (US\$10 por cada 1,000) y traen mucho texto. Para ahorrar: Sonnet con esfuerzo Automático, o Haiku con esfuerzo Bajo para dudas rápidas.")
             }
             SectionCard {
                 Title("Google Maps")
-                Muted("Para rutas exactas (líneas, estaciones, tarifas del metro) activa en Google Cloud: Routes API y Places API (New). El mapa dentro de la app usa la clave puesta al compilar (MAPS_API_KEY en local.properties).")
+                Muted("Activa en Google Cloud: Maps SDK for Android, Routes API y Places API (New). Rutas reales en auto y caminando; transporte público con líneas y tarifas solo en México (en Japón Google no lo da a las apps: se estima y el botón abre Google Maps). El mapa dentro de la app usa la clave puesta al compilar (MAPS_API_KEY en local.properties).")
                 Muted(if (BuildConfig.MAPS_API_KEY.isNotBlank()) "✓ Esta versión trae clave de Maps." else "Esta versión no trae clave de Maps: el mapa del día abre Google Maps.")
                 OutlinedTextField(maps, { maps = it }, label = { Text("Clave para rutas (opcional, reemplaza la de compilación)") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
@@ -73,7 +85,7 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
                 Muted("Actualízalo antes del viaje; es solo para mostrar equivalencias.")
             }
             Button(onClick = {
-                s.claudeKey = claude; s.mapsKey = maps; s.model = model; s.showMxn = showMxn
+                s.claudeKey = claude; s.mapsKey = maps; s.model = model; s.effort = effort; s.showMxn = showMxn
                 rate.toDoubleOrNull()?.takeIf { it > 0 }?.let { s.mxnPerJpy = it }
                 ctx.toast("Guardado"); nav.back()
             }, modifier = Modifier.fillMaxWidth()) { Text("Guardar") }

@@ -85,13 +85,13 @@ object Fares {
                 meter *= 1.1
                 val night = hour >= 22 || hour < 5
                 if (night) meter *= 1.2
-                val nightNote = (if (night) " Incluye recargo nocturno (22:00–5:00)." else "") +
-                    // Trayectos largos (aeropuertos): el taxímetro sale caro; hay tarifas fijas por zona.
-                    if (km > 40) " Si sales del aeropuerto, pide la tarifa fija (定額, ≈¥20,000–30,000 a Tokio centro): suele salir más barata que el taxímetro. Peajes aparte." else ""
+                val nightNote = if (night) " Incluye recargo nocturno (22:00–5:00)." else ""
+                // Trayectos largos (aeropuertos): el taxímetro sale caro; hay tarifas fijas por zona.
+                val fixedNote = if (km > 40) " Si sales del aeropuerto, pide la tarifa fija (定額, ≈¥20,000–30,000 a Tokio centro): suele salir más barata que el taxímetro. Peajes aparte." else ""
                 listOf(
                     RideEstimate(
                         "Taxi en la calle", Money(round10(meter), "JPY"), Money(round10(meter * 1.2), "JPY"),
-                        "Taxímetro. Puertas automáticas, no se deja propina.$nightNote",
+                        "Taxímetro. Puertas automáticas, no se deja propina.$nightNote$fixedNote",
                     ),
                     RideEstimate(
                         "GO (app de taxis)", Money(round10(meter + 100), "JPY"), Money(round10(meter * 1.2 + 500), "JPY"),
@@ -136,8 +136,12 @@ object Fares {
         if (maps.hasKey) {
             runCatching {
                 maps.route(from, to, Mode.WALK).firstOrNull()?.let { walk = it }
-                val t = maps.route(from, to, Mode.TRANSIT, departureEpochSec)
-                if (t.isNotEmpty()) transit = t.sortedBy { it.minutes }
+                // Google no entrega rutas de transporte público de Japón a apps (sí en México):
+                // ahí se usa el estimado y el botón de Google Maps muestra los trenes reales.
+                if (country != Country.JP) {
+                    val t = maps.route(from, to, Mode.TRANSIT, departureEpochSec)
+                    if (t.isNotEmpty()) transit = t.sortedBy { it.minutes }
+                }
                 maps.route(from, to, Mode.DRIVE).firstOrNull()?.let { drive = it }
                 usedGoogle = true
             }.onFailure { error = it.message }
@@ -173,12 +177,15 @@ object Fares {
         return when {
             travelers >= 3 && rideLow <= transitTotal * 1.5 && timeSaved > 10 ->
                 Mode.DRIVE to "Son $travelers personas: el taxi sale casi igual que pagar ${travelers} boletos y ahorran ~$timeSaved min."
-            timeSaved >= 35 && walk.minutes > 40 ->
-                Mode.DRIVE to "El transporte público tarda ~$timeSaved min más; si van con prisa o con maletas, el taxi conviene."
+            // El taxi solo conviene por tiempo si cada minuto ahorrado no sale carísimo
+            // (≈¥80 por minuto en Japón, ≈MX$8 en México); si no, Narita → Tokio en taxi saldría "recomendado".
+            timeSaved >= 35 && walk.minutes > 40 && (rideLow - transitTotal) / timeSaved <= (if (country == Country.JP) 80.0 else 8.0) ->
+                Mode.DRIVE to "El transporte público tarda ~$timeSaved min más y el taxi no sale tan caro; si van con prisa o con maletas, conviene."
             else -> {
-                val extra = if (transfers > 0) " con $transfers transbordo(s)" else " directo"
+                val extra = if (transit.estimated) "" else if (transfers > 0) " con $transfers transbordo(s)" else " directo"
                 val card = if (country == Country.JP) " Paga con tu Suica/PASMO." else " En CDMX paga con la tarjeta de Movilidad Integrada."
-                Mode.TRANSIT to "Transporte público${extra}: ${transit.minutes} min y mucho más barato que el taxi.$card"
+                val taxiNote = if (timeSaved >= 20) " El taxi ahorra ~$timeSaved min pero cuesta mucho más." else ""
+                Mode.TRANSIT to "Transporte público$extra: ${transit.minutes} min y mucho más barato que el taxi.$taxiNote$card"
             }
         }
     }

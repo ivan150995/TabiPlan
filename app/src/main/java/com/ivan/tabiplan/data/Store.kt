@@ -99,6 +99,11 @@ class Settings(context: Context) {
         get() = prefs.getString("model", AiModel.OPUS.id) ?: AiModel.OPUS.id
         set(v) = prefs.edit().putString("model", v).apply()
 
+    /** Esfuerzo de la IA: "auto" usa el nivel pensado para cada tarea; si no, se aplica a todas. */
+    var effort: String
+        get() = prefs.getString("effort", AiEffort.AUTO.id) ?: AiEffort.AUTO.id
+        set(v) = prefs.edit().putString("effort", v).apply()
+
     /** Pesos mexicanos por 1 yen, para mostrar precios en las dos monedas. */
     var mxnPerJpy: Double
         get() = prefs.getFloat("mxnPerJpy", 0.12f).toDouble()
@@ -110,7 +115,15 @@ class Settings(context: Context) {
 }
 
 enum class AiModel(val id: String, val label: String, val note: String) {
-    OPUS("claude-opus-5-5", "Claude Opus 5.5", "El más capaz (recomendado para itinerarios)"),
-    SONNET("claude-sonnet-5-5", "Claude Sonnet 5.5", "Más barato, muy bueno"),
-    HAIKU("claude-haiku-5-5", "Claude Haiku 5.5", "El más barato y rápido"),
+    OPUS("claude-opus-5-5", "Claude Opus 5.5", "El más capaz. US\$4 / \$20 por millón de tokens (entrada / salida)"),
+    SONNET("claude-sonnet-5-5", "Claude Sonnet 5.5", "Muy bueno a la mitad de precio. US\$2 / \$10 por millón"),
+    HAIKU("claude-haiku-5-5", "Claude Haiku 5.5", "El más barato y rápido; para preguntas sencillas. US\$0.10 / \$0.50 por millón"),
+}
+
+/** Cuánto piensa el modelo antes de responder. Menos esfuerzo = menos tokens y respuestas más rápidas. */
+enum class AiEffort(val id: String, val label: String, val note: String) {
+    AUTO("auto", "Automático", "Bajo para consejos de traslado, medio para itinerarios, hoteles y preguntas"),
+    LOW("low", "Bajo", "El que menos gasta; bien para dudas rápidas"),
+    MEDIUM("medium", "Medio", "Equilibrado"),
+    HIGH("high", "Alto", "Piensa más y gasta más; para itinerarios largos o complicados"),
 }

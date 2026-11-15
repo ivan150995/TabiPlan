@@ -73,6 +73,10 @@ data class RouteResult(
     val source: String = if (estimated) "estimate" else "google",
     /** true = la tarifa la calculó la app (la fuente no la da). */
     val fareEstimated: Boolean = false,
+    /** Tarifa pagando con Suica/PASMO (NAVITIME). */
+    val fareIc: Money? = null,
+    /** Cargo de expreso o Shinkansen incluido en la tarifa (NAVITIME). */
+    val surcharge: Money? = null,
 )
 
 data class Money(val amount: Double, val currency: String) {

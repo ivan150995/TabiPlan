@@ -40,6 +40,8 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
     var maps by remember { mutableStateOf(s.mapsKey) }
     var model by remember { mutableStateOf(s.model) }
     var effort by remember { mutableStateOf(s.effort) }
+    var navKey by remember { mutableStateOf(s.navitimeKey) }
+    var navAuto by remember { mutableStateOf(s.navitimeAuto) }
     var rate by remember { mutableStateOf("%.4f".format(java.util.Locale.US, s.mxnPerJpy).trimEnd('0').trimEnd('.')) }
     var showMxn by remember { mutableStateOf(s.showMxn) }
     Scaffold(topBar = { BackBar("Ajustes", { nav.back() }) }) { pad ->
@@ -77,6 +79,27 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
                 Muted("Sin clave la app estima tiempos y precios por distancia y te manda a Google Maps para navegar.")
             }
             SectionCard {
+                Title("NAVITIME (precio exacto en Japón)")
+                Muted("Tarifas exactas de tren, metro y Shinkansen (boleto y Suica/PASMO) con horarios reales. Plan gratis de RapidAPI: 500 consultas al mes; al llegar al límite se detiene, no cobra. Cada ruta consultada se guarda en el teléfono y no vuelve a gastar.")
+                Muted(
+                    when {
+                        !deps.navitime.hasKey -> "Sin clave: se usa Transitous con precio estimado."
+                        deps.navitime.remaining != null -> "Quedan ${deps.navitime.remaining} de 500 este mes" +
+                            (s.navitimeResetAt.takeIf { it > 0 }?.let { " (se renueva el ${java.text.SimpleDateFormat("d MMM", java.util.Locale("es", "MX")).format(java.util.Date(it))})" } ?: "") + "."
+                        else -> "✓ Clave lista. El contador aparece tras la primera consulta."
+                    }
+                )
+                OutlinedTextField(navKey, { navKey = it }, label = { Text("Clave de RapidAPI (opcional, reemplaza la de compilación)") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Automático en tramos largos")
+                        Muted("Aeropuerto, Shinkansen y viajes de más de 30 km. En los demás tramos hay un botón.")
+                    }
+                    Switch(navAuto, { navAuto = it })
+                }
+            }
+            SectionCard {
                 Title("Moneda")
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Mostrar precios en pesos también", Modifier.weight(1f)); Switch(showMxn, { showMxn = it })
@@ -85,7 +108,7 @@ fun SettingsScreen(deps: AppDeps, nav: Nav) {
                 Muted("Actualízalo antes del viaje; es solo para mostrar equivalencias.")
             }
             Button(onClick = {
-                s.claudeKey = claude; s.mapsKey = maps; s.model = model; s.effort = effort; s.showMxn = showMxn
+                s.claudeKey = claude; s.mapsKey = maps; s.model = model; s.effort = effort; s.navitimeKey = navKey; s.navitimeAuto = navAuto; s.showMxn = showMxn
                 rate.toDoubleOrNull()?.takeIf { it > 0 }?.let { s.mxnPerJpy = it }
                 ctx.toast("Guardado"); nav.back()
             }, modifier = Modifier.fillMaxWidth()) { Text("Guardar") }

@@ -26,8 +26,14 @@ data class LegOptions(
     val usedGoogle: Boolean,
     val googleError: String? = null,
 ) {
-    /** "google", "transitous" o "estimate". */
+    /** "google", "transitous", "navitime" o "estimate". */
     val transitSource: String get() = transit.firstOrNull()?.source ?: "estimate"
+
+    /** Cambia las rutas de transporte público (p. ej. por las de NAVITIME) y recalcula la recomendación. */
+    fun withTransit(list: List<RouteResult>, country: Country, travelers: Int, hour: Int): LegOptions {
+        val (mode, why) = Fares.recommend(country, walk, list.firstOrNull(), drive, rides, travelers, hour)
+        return copy(transit = list, recommended = mode, reason = why)
+    }
 
     /** Tarifa del transporte público: la de Google o la estimada. */
     fun transitFare(country: Country): Money? = transit.firstOrNull()?.fare ?: transit.firstOrNull()?.let {

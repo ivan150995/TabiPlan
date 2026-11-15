@@ -99,6 +99,24 @@ class Settings(context: Context) {
         get() = prefs.getString("model", AiModel.OPUS.id) ?: AiModel.OPUS.id
         set(v) = prefs.edit().putString("model", v).apply()
 
+    /** Clave de RapidAPI para NAVITIME. Vacía = la de local.properties usada al compilar. */
+    var navitimeKey: String
+        get() = prefs.getString("navitimeKey", "") ?: ""
+        set(v) = prefs.edit().putString("navitimeKey", v.trim()).apply()
+
+    /** Pedir el precio exacto a NAVITIME solo en tramos largos (aeropuerto, Shinkansen). */
+    var navitimeAuto: Boolean
+        get() = prefs.getBoolean("navitimeAuto", true)
+        set(v) = prefs.edit().putBoolean("navitimeAuto", v).apply()
+
+    /** Consultas de NAVITIME que quedan y cuándo se renuevan (de los encabezados de RapidAPI). */
+    var navitimeRemaining: Int
+        get() = prefs.getInt("navitimeRemaining", -1)
+        set(v) = prefs.edit().putInt("navitimeRemaining", v).apply()
+    var navitimeResetAt: Long
+        get() = prefs.getLong("navitimeResetAt", 0)
+        set(v) = prefs.edit().putLong("navitimeResetAt", v).apply()
+
     /** Esfuerzo de la IA: "auto" usa el nivel pensado para cada tarea; si no, se aplica a todas. */
     var effort: String
         get() = prefs.getString("effort", AiEffort.AUTO.id) ?: AiEffort.AUTO.id

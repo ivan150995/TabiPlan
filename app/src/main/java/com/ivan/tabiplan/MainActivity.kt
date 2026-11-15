@@ -26,6 +26,7 @@ class AppDeps(activity: ComponentActivity) {
     val settings = Settings(activity.applicationContext)
     val maps = GoogleMaps(activity.applicationContext) { settings.mapsKey.ifBlank { BuildConfig.MAPS_API_KEY } }
     val ai = TravelAi(settings)
+    val navitime = com.ivan.tabiplan.maps.Navitime(activity.applicationContext, settings) { settings.navitimeKey.ifBlank { BuildConfig.NAVITIME_KEY } }
 }
 
 sealed interface Screen {

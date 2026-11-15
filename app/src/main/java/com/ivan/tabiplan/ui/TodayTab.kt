@@ -62,6 +62,8 @@ import com.ivan.tabiplan.Screen
 import com.ivan.tabiplan.data.Country
 import com.ivan.tabiplan.data.Place
 import com.ivan.tabiplan.data.PlaceKind
+import androidx.compose.material.icons.filled.Payments
+import com.ivan.tabiplan.maps.haversineKm
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.Map
 import com.ivan.tabiplan.maps.Transitous
@@ -207,8 +209,31 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
     var advice by remember(from, to) { mutableStateOf<String?>(null) }
     var advising by remember(from, to) { mutableStateOf(false) }
     val hour = LocalTime.now().hour
+    // NAVITIME (precio exacto en Japón): la ruta de Transitous se guarda para verla con nombres en inglés.
+    var english by remember(from, to) { mutableStateOf<RouteResult?>(null) }
+    var showEnglish by remember(from, to) { mutableStateOf(false) }
+    var navLoading by remember(from, to) { mutableStateOf(false) }
+    var navError by remember(from, to) { mutableStateOf<String?>(null) }
+    suspend fun fetchNavitime(o: LegOptions) {
+        navLoading = true; navError = null
+        runCatching { deps.navitime.route(from.ll, to.ll) }
+            .onSuccess { list ->
+                if (list.isEmpty()) navError = "NAVITIME no encontró ruta."
+                else {
+                    english = o.transit.firstOrNull()?.takeIf { it.source == "transitous" }
+                    options = o.withTransit(list, trip.country, trip.travelers, hour)
+                }
+            }
+            .onFailure { navError = it.message }
+        navLoading = false
+    }
     LaunchedEffect(from, to) {
-        options = Fares.options(deps.maps, from.ll, to.ll, trip.country, trip.travelers, hour, System.currentTimeMillis() / 1000)
+        val o = Fares.options(deps.maps, from.ll, to.ll, trip.country, trip.travelers, hour, System.currentTimeMillis() / 1000)
+        options = o
+        // Automático solo en tramos largos (aeropuerto, Shinkansen), donde el estimado falla más; se guardan 50 consultas de reserva.
+        if (trip.country == Country.JP && deps.navitime.hasKey && deps.settings.navitimeAuto &&
+            haversineKm(from.ll, to.ll) >= 30 && (deps.navitime.remaining ?: 500) > 50
+        ) fetchNavitime(o)
     }
     val rate = deps.settings.mxnPerJpy
     val showMxn = deps.settings.showMxn
@@ -241,8 +266,33 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
             val fare = o.transitFare(trip.country)
             val fareText = fare?.let { f -> (if (t.fare == null || t.fareEstimated) "≈ " else "") + f.withMxn(rate, showMxn) + if (trip.travelers > 1) " c/u" else "" } ?: "precio no disponible"
             OptionHeader(Icons.Default.Train, "Transporte público", "${minutesText(t.minutes)} · $fareText", o.recommended == Mode.TRANSIT)
+            if (t.source == "navitime") Muted(
+                "✓ Precio exacto (NAVITIME): boleto ${t.fare?.format() ?: "?"}" +
+                    (t.fareIc?.let { " · con Suica/PASMO ${it.format()}" } ?: "") +
+                    (t.surcharge?.let { " · incluye ${it.format()} de cargo de expreso/Shinkansen (asiento)" } ?: "")
+            )
             TransitSteps(t)
             when (o.transitSource) {
+                "navitime" -> {
+                    o.transit.drop(1).forEach { alt ->
+                        Muted("Otra opción: ${minutesText(alt.minutes)} · ${(alt.steps.size - 1).let { if (it == 0) "directo" else "$it transbordo(s)" }} · ${alt.fare?.format() ?: "?"}")
+                    }
+                    Muted("Precios de NAVITIME; tiempos de viaje promedio (los horarios reales, en la ruta en inglés o en Google Maps). Las estaciones llevan su número (ej. KS41), igual que en los letreros.")
+                    english?.let { en ->
+                        TextButton(onClick = { showEnglish = !showEnglish }) {
+                            Text(if (showEnglish) "Ocultar ruta con nombres en inglés" else "Ver ruta con nombres en inglés (Transitous)")
+                        }
+                        if (showEnglish) {
+                            TransitSteps(en)
+                            Text(
+                                "Rutas: Transitous · datos de los operadores y © OpenStreetMap",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable { ctx.openUrl(Transitous.SOURCES_URL) }.padding(vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
                 "transitous" -> {
                     o.transit.drop(1).forEach { alt ->
                         Muted("Otra opción: ${minutesText(alt.minutes)} · ${(alt.steps.size - 1).let { if (it == 0) "directo" else "$it transbordo(s)" }} · " +
@@ -258,6 +308,14 @@ private fun NextLeg(deps: AppDeps, trip: Trip, from: Point, to: Point, isReturn:
                 }
                 "estimate" -> Muted("No se pudo obtener la ruta de transporte público: tiempo y precio estimados por distancia.")
                 else -> if (o.transit.size > 1) Muted("+${o.transit.size - 1} ruta(s) alternativa(s) en Google Maps.")
+            }
+            if (trip.country == Country.JP && deps.navitime.hasKey && o.transitSource != "navitime") {
+                if (navLoading) Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(18.dp)); HSpace(); Muted("Consultando NAVITIME…") }
+                else OutlinedButton(onClick = { scope.launch { fetchNavitime(o) } }) {
+                    Icon(Icons.Default.Payments, null); HSpace(4)
+                    Text("Precio exacto (NAVITIME)" + (deps.navitime.remaining?.let { " · quedan $it" } ?: ""))
+                }
+                navError?.let { Muted("NAVITIME: $it") }
             }
             OutlinedButton(onClick = { ctx.openUrl(mapsUrl(from, to, Mode.TRANSIT)) }) {
                 Icon(Icons.Default.Map, null); HSpace(4); Text("Ver ruta y precios en Google Maps")
@@ -328,7 +386,7 @@ private fun TransitSteps(r: RouteResult) {
                 HSpace()
                 Column {
                     Text("${s.vehicle.ifBlank { "Línea" }} ${s.line}" + if (s.departs.isNotBlank()) " · sale ${s.departs}" else "", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Muted("${s.from} → ${s.to}" + (if (s.headsign.isNotBlank()) " (dir. ${s.headsign})" else "") + " · ${s.stops} parada${if (s.stops == 1) "" else "s"} · ${s.minutes} min")
+                    Muted("${s.from} → ${s.to}" + (if (s.headsign.isNotBlank()) " (dir. ${s.headsign})" else "") + (if (s.stops > 0) " · ${s.stops} parada${if (s.stops == 1) "" else "s"}" else "") + " · ${s.minutes} min")
                 }
             }
         }

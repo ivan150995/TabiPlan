@@ -26,6 +26,7 @@ El APK queda en `app/build/outputs/apk/debug/TabiPlan-<versión>-debug.apk`.
 ## Datos y atribución
 
 - Rutas de transporte público en Japón (y de respaldo en México): [Transitous](https://transitous.org), con datos de los [operadores de transporte](https://transitous.org/sources/) y © [colaboradores de OpenStreetMap](https://www.openstreetmap.org/copyright). Transitous no da tarifas: la app las estima por distancia y operador.
+- Precio exacto en Japón (opcional): [NAVITIME Route (totalnavi)](https://rapidapi.com/navitimejapan-navitimejapan/api/navitime-route-totalnavi) por RapidAPI, con clave `NAVITIME_RAPIDAPI_KEY` en `local.properties` o en *Ajustes* (plan gratis: 500 consultas al mes; cada ruta se guarda en el teléfono).
 - Rutas en auto, caminando y transporte público en México: Google Routes API. Búsqueda de lugares: Google Places API.
 - Precios y reglas de las guías revisados en noviembre de 2026; pueden cambiar.
 

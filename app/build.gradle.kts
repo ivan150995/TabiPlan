@@ -11,6 +11,7 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val mapsKey: String = localProps.getProperty("MAPS_API_KEY", "")
+val navitimeKey: String = localProps.getProperty("NAVITIME_RAPIDAPI_KEY", "")
 
 android {
     namespace = "com.ivan.tabiplan"
@@ -24,6 +25,7 @@ android {
         versionName = "0.1.0"
         manifestPlaceholders["mapsApiKey"] = mapsKey
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
+        buildConfigField("String", "NAVITIME_KEY", "\"$navitimeKey\"")
     }
 
     buildTypes {

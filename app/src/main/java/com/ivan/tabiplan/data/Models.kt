@@ -28,12 +28,20 @@ data class PlaceInfo(
     val bestTime: String = "",
     val tips: String = "",
     val closedDays: String = "",
+    /** Qué tan lleno se pone: 0 = no se sabe, 1 = poco, 2 = normal, 3 = muy lleno (filas). */
+    val crowd: Int = 0,
+    /** Cuándo se pone más lleno ("sábados 11–15 h"). */
+    val peakTimes: String = "",
+    /** Mejor momento: morning, afternoon, sunset, night o vacío (cualquiera). */
+    val bestSlot: String = "",
+    val reservation: Boolean = false,
     val sources: List<String> = emptyList(),
     val researchedAt: Long = 0,
 ) {
     fun toJson() = JSONObject()
         .put("summary", summary).put("suggestedMinutes", suggestedMinutes).put("hours", hours)
         .put("price", price).put("bestTime", bestTime).put("tips", tips).put("closedDays", closedDays)
+        .put("crowd", crowd).put("peakTimes", peakTimes).put("bestSlot", bestSlot).put("reservation", reservation)
         .put("sources", JSONArray(sources)).put("researchedAt", researchedAt)
 
     companion object {
@@ -45,10 +53,52 @@ data class PlaceInfo(
             bestTime = o.optString("bestTime"),
             tips = o.optString("tips"),
             closedDays = o.optString("closedDays"),
+            crowd = o.optInt("crowd"),
+            peakTimes = o.optString("peakTimes"),
+            bestSlot = o.optString("bestSlot"),
+            reservation = o.optBoolean("reservation"),
             sources = o.optJSONArray("sources").strings(),
             researchedAt = o.optLong("researchedAt"),
         )
     }
+}
+
+/**
+ * Horario de apertura por día de la semana.
+ * [week] va de lunes (0) a domingo (6): "09:00-17:00", varios tramos "11:00-14:30,17:00-22:00",
+ * "" = cerrado, "?" = no se sabe. Si cierra después de medianoche: "18:00-02:00".
+ */
+data class OpenHours(
+    val week: List<String> = List(7) { "?" },
+    /** Días sin abrir durante el viaje (yyyy-MM-dd): año nuevo, mantenimiento, eventos privados… */
+    val closedDates: List<String> = emptyList(),
+    /** Minutos antes del cierre en que ya no dejan entrar (museos: 30). */
+    val lastEntry: Int = 0,
+    /** En días festivos: "open" abre normal, "closed" cierra, "shift" si su día de descanso cae en festivo abre y descansa el siguiente día hábil (museos de Japón). */
+    val holidayRule: String = "",
+    /** google, ia o tú. */
+    val source: String = "",
+) {
+    val known get() = week.any { it != "?" }
+
+    fun toJson() = JSONObject().put("week", JSONArray(week)).put("closedDates", JSONArray(closedDates))
+        .put("lastEntry", lastEntry).put("holidayRule", holidayRule).put("source", source)
+
+    companion object {
+        fun fromJson(o: JSONObject): OpenHours {
+            val w = o.optJSONArray("week")
+            val week = (0 until 7).map { i -> w?.optString(i, "?") ?: "?" }
+            return OpenHours(week, o.optJSONArray("closedDates").strings(), o.optInt("lastEntry"), o.optString("holidayRule"), o.optString("source"))
+        }
+    }
+}
+
+/** Qué comida se hace en un lugar de comida. */
+enum class Meal(val label: String) {
+    ANY("Cualquiera"),
+    BREAKFAST("Desayuno"),
+    LUNCH("Comida"),
+    DINNER("Cena"),
 }
 
 data class Place(
@@ -63,14 +113,23 @@ data class Place(
     val mustVisit: Boolean = false,
     /** Día preferido (yyyy-MM-dd) o vacío. */
     val preferredDate: String = "",
+    /** Hora fija de llegada ("HH:mm") ese día: reserva, boleto con horario… Vacío = cuando convenga. */
+    val fixedTime: String = "",
     /** Para hoteles: noches que cubre (check-in inclusive, check-out exclusive). */
     val checkIn: String = "",
     val checkOut: String = "",
     val notes: String = "",
     val info: PlaceInfo? = null,
     val completedAt: Long = 0,
+    val hours: OpenHours? = null,
+    /** Solo lugares de comida. */
+    val meal: Meal = Meal.ANY,
 ) {
     val hasCoords get() = lat != null && lng != null
+    /** Hora fija en minutos si aplica ese día. */
+    fun fixedOn(date: String): Int? = if (fixedTime.isNotBlank() && preferredDate == date) {
+        fixedTime.split(":").let { (it.getOrNull(0)?.toIntOrNull() ?: 0) * 60 + (it.getOrNull(1)?.toIntOrNull() ?: 0) }
+    } else null
     val completed get() = completedAt > 0
 
     /** Duración efectiva para planear. */
@@ -84,9 +143,10 @@ data class Place(
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("address", address)
         .putOpt("lat", lat).putOpt("lng", lng).put("kind", kind.name)
-        .putOpt("minutes", minutes).put("mustVisit", mustVisit).put("preferredDate", preferredDate)
+        .putOpt("minutes", minutes).put("mustVisit", mustVisit).put("preferredDate", preferredDate).put("fixedTime", fixedTime)
         .put("checkIn", checkIn).put("checkOut", checkOut).put("notes", notes)
         .putOpt("info", info?.toJson()).put("completedAt", completedAt)
+        .putOpt("hours", hours?.toJson()).put("meal", meal.name)
 
     companion object {
         fun fromJson(o: JSONObject) = Place(
@@ -99,11 +159,14 @@ data class Place(
             minutes = if (o.has("minutes") && !o.isNull("minutes")) o.getInt("minutes") else null,
             mustVisit = o.optBoolean("mustVisit"),
             preferredDate = o.optString("preferredDate"),
+            fixedTime = o.optString("fixedTime"),
             checkIn = o.optString("checkIn"),
             checkOut = o.optString("checkOut"),
             notes = o.optString("notes"),
             info = o.optJSONObject("info")?.let { PlaceInfo.fromJson(it) },
             completedAt = o.optLong("completedAt"),
+            hours = o.optJSONObject("hours")?.let { OpenHours.fromJson(it) },
+            meal = enumOr(o.optString("meal"), Meal.ANY),
         )
     }
 }
@@ -115,14 +178,18 @@ data class Stop(
     val leave: String,
     val travelMinutes: Int = 0,
     val note: String = "",
+    /** Tiempo libre para comer antes de salir hacia esta parada (no hay restaurante en la lista a esa hora). */
+    val mealBefore: Int = 0,
+    /** Minutos de espera al llegar (p. ej. a que abra). */
+    val wait: Int = 0,
 ) {
     fun toJson() = JSONObject().put("placeId", placeId).put("arrive", arrive).put("leave", leave)
-        .put("travelMinutes", travelMinutes).put("note", note)
+        .put("travelMinutes", travelMinutes).put("note", note).put("mealBefore", mealBefore).put("wait", wait)
 
     companion object {
         fun fromJson(o: JSONObject) = Stop(
             o.getString("placeId"), o.optString("arrive"), o.optString("leave"),
-            o.optInt("travelMinutes"), o.optString("note"),
+            o.optInt("travelMinutes"), o.optString("note"), o.optInt("mealBefore"), o.optInt("wait"),
         )
     }
 }

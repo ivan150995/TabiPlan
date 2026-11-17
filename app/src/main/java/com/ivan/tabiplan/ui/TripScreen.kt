@@ -59,10 +59,16 @@ import androidx.compose.ui.unit.dp
 import com.ivan.tabiplan.AppDeps
 import com.ivan.tabiplan.Nav
 import com.ivan.tabiplan.Screen
+import androidx.compose.runtime.toMutableStateList
+import com.ivan.tabiplan.data.Meal
+import com.ivan.tabiplan.data.OpenHours
 import com.ivan.tabiplan.data.Place
 import com.ivan.tabiplan.data.PlaceKind
 import com.ivan.tabiplan.data.Trip
 import com.ivan.tabiplan.maps.FoundPlace
+import com.ivan.tabiplan.plan.Advisor
+import com.ivan.tabiplan.plan.DAY_NAMES
+import com.ivan.tabiplan.plan.Hours
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -131,7 +137,9 @@ fun PlacesTab(deps: AppDeps, nav: Nav, trip: Trip) {
         busy = busy + p.id
         scope.launch {
             runCatching { deps.ai.research(p, trip) }
-                .onSuccess { info -> deps.store.update(trip.id) { t -> t.copy(places = t.places.map { if (it.id == p.id) it.copy(info = info) else it }) } }
+                .onSuccess { (info, hours) ->
+                    deps.store.update(trip.id) { t -> t.copy(places = t.places.map { if (it.id == p.id) it.copy(info = info, hours = mergeHours(it.hours, hours)) else it }) }
+                }
                 .onFailure { ctx.toast(it.message ?: "Error") }
             busy = busy - p.id
         }
@@ -167,6 +175,20 @@ fun PlacesTab(deps: AppDeps, nav: Nav, trip: Trip) {
         adding = false; editing = null
         if (researchNow) research(place)
     }
+}
+
+/**
+ * El horario semanal de Google o el que pusiste tú manda; de la IA se toman los cierres especiales del viaje,
+ * la última entrada y qué hace en festivos.
+ */
+private fun mergeHours(old: OpenHours?, ai: OpenHours?): OpenHours? {
+    if (ai == null) return old
+    if (old == null || !old.known || old.source == "ia") return ai
+    return old.copy(
+        closedDates = (old.closedDates + ai.closedDates).distinct(),
+        lastEntry = old.lastEntry.takeIf { it > 0 } ?: ai.lastEntry,
+        holidayRule = old.holidayRule.ifBlank { ai.holidayRule },
+    )
 }
 
 private fun deletePlace(deps: AppDeps, trip: Trip, p: Place) {
@@ -206,8 +228,17 @@ fun PlaceCard(trip: Trip, p: Place, loading: Boolean, onResearch: () -> Unit, on
                 p.info != null && p.info.suggestedMinutes > 0 -> Chip2("⏱ ${minutesText(p.info.suggestedMinutes)} (IA)", MaterialTheme.colorScheme.tertiaryContainer)
                 else -> Chip2("⏱ Lo decide la IA", MaterialTheme.colorScheme.tertiaryContainer)
             }
-            if (p.preferredDate.isNotBlank()) Chip2("📅 ${prettyDate(p.preferredDate)}", MaterialTheme.colorScheme.primaryContainer)
+            if (p.preferredDate.isNotBlank()) Chip2("📅 ${prettyDate(p.preferredDate)}" + if (p.fixedTime.isNotBlank()) " · ${p.fixedTime}" else "", MaterialTheme.colorScheme.primaryContainer)
+            if (p.kind == PlaceKind.FOOD && p.meal != Meal.ANY) Chip2("🍽️ ${p.meal.label}", MaterialTheme.colorScheme.secondaryContainer)
+            if ((p.info?.crowd ?: 0) >= 3) Chip2("👥 Se llena", MaterialTheme.colorScheme.secondaryContainer)
             if (!p.hasCoords) Chip2("Sin ubicación", MaterialTheme.colorScheme.errorContainer)
+        }
+        p.hours?.takeIf { it.known }?.let { h ->
+            Muted("🕘 " + Hours.weekText(h) + when (h.source) { "google" -> " (Google)"; "ia" -> " (IA)"; else -> "" })
+            if (h.closedDates.isNotEmpty()) Muted("🚫 Cerrado en tu viaje: " + h.closedDates.joinToString { prettyDate(it) }, color = MaterialTheme.colorScheme.error)
+        }
+        if (p.fixedTime.isNotBlank() && p.preferredDate.isNotBlank()) {
+            Advisor.conflicts(trip, p.preferredDate, trip.places).filter { p.name in it }.forEach { Muted("⚠️ $it", color = MaterialTheme.colorScheme.error) }
         }
         if (loading) Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.padding(4.dp).height(18.dp)); Muted("Investigando con la IA…")
@@ -219,6 +250,8 @@ fun PlaceCard(trip: Trip, p: Place, loading: Boolean, onResearch: () -> Unit, on
                 InfoLine("Cierra", info.closedDays)
                 InfoLine("Precio", info.price)
                 InfoLine("Mejor hora", info.bestTime)
+                InfoLine("Más gente", info.peakTimes)
+                if (info.reservation) InfoLine("Reserva", "necesita reserva o boleto con horario")
                 InfoLine("Tips", info.tips)
                 info.sources.forEach { s -> Text("🔗 $s", Modifier.clickable { ctx.openUrl(s) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary, maxLines = 1) }
             }
@@ -254,8 +287,21 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
     var checkIn by remember { mutableStateOf(initial?.checkIn ?: trip.startDate) }
     var checkOut by remember { mutableStateOf(initial?.checkOut ?: trip.endDate) }
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
+    var fixedTime by remember { mutableStateOf(initial?.fixedTime ?: "") }
+    var meal by remember { mutableStateOf(initial?.meal ?: Meal.ANY) }
+    var hours by remember { mutableStateOf(initial?.hours) }
+    var editHours by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<FoundPlace>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
+
+    fun build(): Place = (initial ?: Place(name = name.trim())).copy(
+        name = name.trim(), address = address, lat = lat, lng = lng, kind = kind,
+        minutes = if (kind == PlaceKind.HOTEL || aiDecides) null else minutes.toIntOrNull()?.coerceIn(5, 900),
+        mustVisit = must, preferredDate = if (kind == PlaceKind.HOTEL) "" else preferred,
+        fixedTime = if (kind == PlaceKind.HOTEL || preferred.isBlank() || fixedTime.isBlank()) "" else normTime(fixedTime, ""),
+        checkIn = if (kind == PlaceKind.HOTEL) checkIn else "", checkOut = if (kind == PlaceKind.HOTEL) checkOut else "",
+        notes = notes, meal = meal, hours = hours,
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -279,6 +325,13 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
                 results.forEach { r ->
                     SectionCard(Modifier.clickable {
                         name = r.name; address = r.address; lat = r.lat; lng = r.lng; results = emptyList()
+                        // Horario de Google (y si es restaurante) para acomodarlo cuando esté abierto.
+                        if (r.id.isNotBlank() && deps.maps.hasKey) scope.launch {
+                            runCatching { deps.maps.details(r.id) }.onSuccess { (h, food) ->
+                                if (h != null && h.known && hours?.source != "tú") hours = h
+                                if (food && kind == PlaceKind.VISIT) kind = PlaceKind.FOOD
+                            }
+                        }
                     }, color = MaterialTheme.colorScheme.secondaryContainer) {
                         Text(r.name, fontWeight = FontWeight.SemiBold); Muted(r.address)
                     }
@@ -312,23 +365,87 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
                         HSpace(6); Text("Imprescindible")
                     }
                     DateField("Día preferido (opcional)", preferred, { preferred = it }, allowClear = true)
+                    if (preferred.isNotBlank()) {
+                        OutlinedTextField(
+                            fixedTime, { fixedTime = it.filter { c -> c.isDigit() || c == ':' }.take(5) },
+                            label = { Text("Hora fija de llegada (opcional)") }, placeholder = { Text("Ej. 13:00 (reserva, boleto con horario)") },
+                            singleLine = true,
+                        )
+                        if (fixedTime.isNotBlank()) {
+                            val me = build()
+                            val issues = Advisor.conflicts(trip, preferred, trip.places.filter { it.id != me.id } + me).filter { me.name in it }
+                            issues.forEach { Muted("⚠️ $it", color = MaterialTheme.colorScheme.error) }
+                            if (issues.isEmpty()) Muted("El itinerario acomoda lo demás para que llegues a esa hora (cuenta el tiempo que estarás en cada lugar y el traslado).")
+                        }
+                    }
+                    if (kind == PlaceKind.FOOD) {
+                        Text("¿Qué comida?", fontWeight = FontWeight.SemiBold)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Meal.entries.forEach { m -> FilterChip(meal == m, { meal = m }, label = { Text(m.label) }) }
+                        }
+                        Muted("Se acomoda en horario normal de ${if (meal == Meal.ANY) "comida o cena" else meal.label.lowercase()}, evitando la hora pico.")
+                    }
+                    Text("Horario", fontWeight = FontWeight.SemiBold)
+                    Muted(hours?.takeIf { it.known }?.let { Hours.weekText(it) } ?: "Sin horario: se toma de Google al buscar el lugar, de la IA al investigarlo, o lo pones tú.")
+                    TextButton(onClick = { editHours = true }) { Text(if (hours?.known == true) "Editar horario" else "Poner horario") }
                 }
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notas (reserva a las 10:00, ir de noche…)") })
             }
         },
         confirmButton = {
             TextButton(enabled = name.isNotBlank(), onClick = {
-                val p = (initial ?: Place(name = name.trim())).copy(
-                    name = name.trim(), address = address, lat = lat, lng = lng, kind = kind,
-                    minutes = if (kind == PlaceKind.HOTEL || aiDecides) null else minutes.toIntOrNull()?.coerceIn(5, 900),
-                    mustVisit = must, preferredDate = if (kind == PlaceKind.HOTEL) "" else preferred,
-                    checkIn = if (kind == PlaceKind.HOTEL) checkIn else "", checkOut = if (kind == PlaceKind.HOTEL) checkOut else "",
-                    notes = notes,
-                )
+                val p = build()
                 val researchNow = aiDecides && kind != PlaceKind.HOTEL && p.info == null && deps.ai.hasKey
                 onSave(p, researchNow)
             }) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+    if (editHours) HoursDialog(hours, onDismiss = { editHours = false }) { hours = it; editHours = false }
+}
+
+/** Horario por día: "09:00-17:00", varios tramos con coma, vacío = cerrado. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HoursDialog(initial: OpenHours?, onDismiss: () -> Unit, onSave: (OpenHours?) -> Unit) {
+    val week = remember { initial?.week?.map { if (it == "?") "" else it }?.toMutableStateList() ?: MutableList(7) { "" }.toMutableStateList() }
+    var lastEntry by remember { mutableStateOf((initial?.lastEntry ?: 0).takeIf { it > 0 }?.toString() ?: "") }
+    var rule by remember { mutableStateOf(initial?.holidayRule ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Horario") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Muted("Formato 09:00-17:00. Dos tramos: 11:00-14:30,17:00-22:00. Vacío = cerrado ese día.")
+                DAY_NAMES.forEachIndexed { i, d ->
+                    OutlinedTextField(week[i], { week[i] = it }, label = { Text(d.replaceFirstChar { c -> c.uppercase() }) }, singleLine = true,
+                        isError = week[i].isNotBlank() && Hours.parse(week[i]) == null)
+                }
+                OutlinedTextField(lastEntry, { lastEntry = it.filter(Char::isDigit) }, label = { Text("Última entrada (min antes de cerrar)") }, singleLine = true)
+                Text("En días festivos", fontWeight = FontWeight.SemiBold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("" to "No sé", "open" to "Abre", "closed" to "Cierra", "shift" to "Abre y descansa al día siguiente").forEach { (k, l) ->
+                        FilterChip(rule == k, { rule = k }, label = { Text(l) })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(OpenHours(
+                    week = week.map { it.trim() },
+                    closedDates = initial?.closedDates.orEmpty(),
+                    lastEntry = lastEntry.toIntOrNull() ?: 0,
+                    holidayRule = rule,
+                    source = "tú",
+                ))
+            }) { Text("Guardar") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onSave(null) }) { Text("Quitar horario") }
+                TextButton(onClick = onDismiss) { Text("Cancelar") }
+            }
+        },
     )
 }

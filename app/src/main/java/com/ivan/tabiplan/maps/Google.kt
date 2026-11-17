@@ -3,6 +3,7 @@ package com.ivan.tabiplan.maps
 import android.content.Context
 import android.location.Geocoder
 import com.ivan.tabiplan.data.Country
+import com.ivan.tabiplan.data.OpenHours
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -30,7 +31,7 @@ fun haversineKm(a: LatLngD, b: LatLngD): Double {
     return 2 * r * atan2(sqrt(h), sqrt(1 - h))
 }
 
-data class FoundPlace(val name: String, val address: String, val lat: Double, val lng: Double)
+data class FoundPlace(val name: String, val address: String, val lat: Double, val lng: Double, val id: String = "")
 
 enum class Mode(val api: String, val label: String) {
     WALK("WALK", "Caminando"),
@@ -121,7 +122,7 @@ class GoogleMaps(private val context: Context, private val key: () -> String) {
                 .put("regionCode", country.name).put("pageSize", 6)
             val res = post(
                 "https://places.googleapis.com/v1/places:searchText",
-                "places.displayName,places.formattedAddress,places.location",
+                "places.id,places.displayName,places.formattedAddress,places.location",
                 body,
             )
             val places = res.optJSONArray("places") ?: JSONArray()
@@ -133,6 +134,7 @@ class GoogleMaps(private val context: Context, private val key: () -> String) {
                     p.optString("formattedAddress"),
                     loc.getDouble("latitude"),
                     loc.getDouble("longitude"),
+                    p.optString("id"),
                 )
             }
         } else {
@@ -144,6 +146,40 @@ class GoogleMaps(private val context: Context, private val key: () -> String) {
                 FoundPlace(a.featureName ?: query, a.getAddressLine(0) ?: "", a.latitude, a.longitude)
             }
         }
+    }
+
+    /**
+     * Horario semanal de un lugar (Place Details) y si es para comer.
+     * Cuesta como "Enterprise" en Places API (1,000 gratis al mes): solo se pide al elegir un resultado.
+     */
+    suspend fun details(id: String): Pair<OpenHours?, Boolean> = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url("https://places.googleapis.com/v1/places/$id")
+            .header("X-Goog-Api-Key", key())
+            .header("X-Goog-FieldMask", "regularOpeningHours,types")
+            .get().build()
+        val j = http.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) error("Google respondió ${r.code}")
+            JSONObject(r.body?.string().orEmpty().ifBlank { "{}" })
+        }
+        val types = j.optJSONArray("types").let { a -> (0 until (a?.length() ?: 0)).map { a!!.optString(it) } }
+        val food = types.any { it in listOf("restaurant", "cafe", "bakery", "bar", "meal_takeaway", "food") || it.endsWith("_restaurant") }
+        val periods = j.optJSONObject("regularOpeningHours")?.optJSONArray("periods")
+        val hours = periods?.let { ps ->
+            // Google: day 0 = domingo. Nuestro week: 0 = lunes.
+            val byDay = Array(7) { mutableListOf<String>() }
+            for (i in 0 until ps.length()) {
+                val pr = ps.getJSONObject(i)
+                val o = pr.optJSONObject("open") ?: continue
+                val c = pr.optJSONObject("close")
+                val day = (o.optInt("day") + 6) % 7
+                val start = "%02d:%02d".format(o.optInt("hour"), o.optInt("minute"))
+                if (c == null) { (0 until 7).forEach { byDay[it] += "00:00-23:59" }; break } // abierto 24 h
+                val end = "%02d:%02d".format(c.optInt("hour"), c.optInt("minute"))
+                byDay[day] += "$start-$end"
+            }
+            OpenHours(week = byDay.map { it.distinct().joinToString(",") }, source = "google")
+        }
+        hours to food
     }
 
     /** Ruta con Google. Devuelve la mejor opción para el modo (para transporte público, hasta 3). */

@@ -77,4 +77,6 @@ dependencies {
 
     // IA: investigar lugares, armar el itinerario y el asistente de viaje (Claude).
     implementation("com.anthropic:anthropic-java:2.34.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

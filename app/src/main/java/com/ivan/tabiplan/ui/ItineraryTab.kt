@@ -61,8 +61,13 @@ import com.ivan.tabiplan.BuildConfig
 import com.ivan.tabiplan.data.PlaceKind
 import com.ivan.tabiplan.data.PlanDay
 import com.ivan.tabiplan.data.Trip
+import com.ivan.tabiplan.data.Meal
+import com.ivan.tabiplan.plan.Advisor
 import com.ivan.tabiplan.plan.Planner
+import com.ivan.tabiplan.plan.TravelCalendar
+import com.ivan.tabiplan.plan.fromMin
 import com.ivan.tabiplan.plan.hotelFor
+import com.ivan.tabiplan.plan.toMin
 import kotlinx.coroutines.launch
 
 @Composable
@@ -97,6 +102,14 @@ fun ItineraryTab(deps: AppDeps, trip: Trip, onGoToday: () -> Unit) {
                 val noCoords = toPlan.count { p -> !p.hasCoords }
                 if (noCoords > 0) Muted("⚠️ $noCoords lugar(es) sin ubicación: búscalos en Lugares para ordenarlos bien.")
                 if (trip.places.none { p -> p.kind == PlaceKind.HOTEL }) Muted("Tip: agrega tus hoteles con fechas para que cada día empiece y termine ahí.")
+                val noHours = toPlan.count { p -> (p.kind == PlaceKind.VISIT || p.kind == PlaceKind.FOOD) && p.hours?.known != true }
+                if (noHours > 0) Muted("🕘 $noHours lugar(es) sin horario: investígalos con IA o búscalos con Google para no llegar cuando esté cerrado.")
+                val calendar = TravelCalendar.summary(trip.country, com.ivan.tabiplan.plan.tripDates(trip))
+                if (calendar.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("En las fechas de tu viaje", fontWeight = FontWeight.SemiBold)
+                    calendar.forEach { Muted(it) }
+                }
                 Spacer(Modifier.height(8.dp))
                 if (generating) Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.width(22.dp).height(22.dp)); HSpace(); Text("La IA está armando tu itinerario… (puede tardar 1–2 min)")
@@ -156,7 +169,7 @@ fun ItineraryTab(deps: AppDeps, trip: Trip, onGoToday: () -> Unit) {
             title = { Text("Itinerario con IA") },
             text = {
                 Column {
-                    Text("La IA usa tus lugares, tiempos, hoteles y horarios (y lo que investigó de cada lugar) para repartir los días.")
+                    Text("La IA usa tus lugares, tiempos, horas fijas, hoteles y horarios (y lo que investigó de cada lugar), además de festivos, temporadas altas y horas pico de comida, para repartir los días.")
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(wishes, { wishes = it }, label = { Text("Algo más (opcional)") }, placeholder = { Text("Ej.: el primer día tranquilo por el jet lag; comer en Tsukiji") })
                 }
@@ -234,18 +247,25 @@ private fun DayCard(
             IconButton(onClick = onToggleMap) { Icon(Icons.Default.Map, "Mapa del día") }
             if (isToday) TextButton(onClick = onToday) { Text("Ir a Hoy") }
         }
+        Advisor.dayHints(trip, day.date).forEach { HintLine(it) }
         if (day.note.isNotBlank()) Muted(day.note)
         if (showMap) DayMap(ctx, trip, day)
         if (day.stops.isEmpty()) Muted("Día libre.")
         day.stops.forEachIndexed { i, stop ->
             val p = trip.place(stop.placeId) ?: return@forEachIndexed
             HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            if (stop.mealBefore > 0) {
+                val leaveMeal = toMin(stop.arrive) - stop.wait - stop.travelMinutes
+                val lunch = TravelCalendar.meal(trip.country, Meal.LUNCH)
+                Muted("   🍱 ${fromMin(leaveMeal - stop.mealBefore)}–${fromMin(leaveMeal)} comida libre por la zona (hora pico ${lunch.peakText()})")
+            }
             if (stop.travelMinutes > 0) Muted("   ↓ traslado ~${minutesText(stop.travelMinutes)}")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${stop.arrive}\n${stop.leave}", Modifier.width(52.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
                 Column(Modifier.weight(1f)) {
                     Text((if (p.completed) "✅ " else "") + p.name + if (p.mustVisit) " ⭐" else "", fontWeight = FontWeight.SemiBold)
                     if (stop.note.isNotBlank()) Muted(stop.note)
+                    if (!p.completed) Advisor.stopHints(trip, day, i).forEach { HintLine(it) }
                 }
                 var menu by remember { mutableStateOf(false) }
                 Box {

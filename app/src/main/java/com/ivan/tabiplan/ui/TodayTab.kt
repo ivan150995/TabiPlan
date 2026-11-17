@@ -71,6 +71,7 @@ import com.ivan.tabiplan.data.Trip
 import com.ivan.tabiplan.maps.LatLngD
 import com.ivan.tabiplan.maps.Mode
 import com.ivan.tabiplan.maps.RouteResult
+import com.ivan.tabiplan.plan.Advisor
 import com.ivan.tabiplan.plan.hotelFor
 import com.ivan.tabiplan.plan.tripDates
 import com.ivan.tabiplan.transport.Fares
@@ -171,6 +172,7 @@ fun TodayTab(deps: AppDeps, nav: Nav, trip: Trip) {
             // Lista del día
             SectionCard {
                 Title("Paradas del ${prettyDate(date)}")
+                Advisor.dayHints(trip, date).forEach { HintLine(it) }
                 start?.let { Muted(if (it.kind == PlaceKind.AIRPORT) "✈️ Llegas a ${it.name}" else "🏨 Sales de ${it.name}") }
                 stops.forEach { (stop, p) ->
                     HorizontalDivider(Modifier.padding(vertical = 4.dp))
@@ -180,6 +182,11 @@ fun TodayTab(deps: AppDeps, nav: Nav, trip: Trip) {
                             Text(p.name + if (p == next?.second) "  ← siguiente" else "", fontWeight = if (p == next?.second) FontWeight.Bold else FontWeight.Normal)
                             Muted("${stop.arrive}–${stop.leave} · ${minutesText(p.plannedMinutes)}")
                             if (stop.note.isNotBlank()) Muted(stop.note)
+                            // Avisos solo del siguiente lugar (horario de hoy, comida, gente…), para no llenar la lista.
+                            if (p == next?.second && day != null) {
+                                val idx = day.stops.indexOfFirst { it.placeId == p.id }
+                                Advisor.stopHints(trip, day, idx).forEach { HintLine(it) }
+                            }
                         }
                     }
                 }

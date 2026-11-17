@@ -93,9 +93,14 @@ fun Title(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Muted(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun Muted(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Text(text, modifier, style = MaterialTheme.typography.bodySmall, color = color)
 }
+
+/** Aviso del itinerario: en rojo si conviene corregir algo. */
+@Composable
+fun HintLine(h: com.ivan.tabiplan.plan.Hint) =
+    Muted(h.text, color = if (h.warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 
 private val niceDate = DateTimeFormatter.ofPattern("EEE d MMM", Locale("es", "MX"))
 

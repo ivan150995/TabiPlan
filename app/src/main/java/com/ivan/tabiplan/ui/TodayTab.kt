@@ -73,6 +73,7 @@ import com.ivan.tabiplan.maps.Mode
 import com.ivan.tabiplan.maps.RouteResult
 import com.ivan.tabiplan.plan.Advisor
 import com.ivan.tabiplan.plan.hotelFor
+import com.ivan.tabiplan.plan.startHotelFor
 import com.ivan.tabiplan.plan.tripDates
 import com.ivan.tabiplan.transport.Fares
 import com.ivan.tabiplan.transport.LegOptions
@@ -104,7 +105,7 @@ fun TodayTab(deps: AppDeps, nav: Nav, trip: Trip) {
     val stops = day?.stops.orEmpty().mapNotNull { s -> trip.place(s.placeId)?.let { s to it } }
     // Hotel de esa noche y punto de salida del día (el hotel, o el aeropuerto el día de llegada).
     val hotel = hotelFor(trip, date)
-    val start = trip.place(day?.startPlaceId.orEmpty()) ?: hotel
+    val start = trip.place(day?.startPlaceId.orEmpty()) ?: startHotelFor(trip, date)
     val next = stops.firstOrNull { !it.second.completed }
     val lastDone = stops.lastOrNull { it.second.completed }?.second
     val endsAtAirport = stops.lastOrNull()?.second?.kind == PlaceKind.AIRPORT
@@ -182,6 +183,7 @@ fun TodayTab(deps: AppDeps, nav: Nav, trip: Trip) {
                             Text(p.name + if (p == next?.second) "  ← siguiente" else "", fontWeight = if (p == next?.second) FontWeight.Bold else FontWeight.Normal)
                             Muted("${stop.arrive}–${stop.leave} · ${minutesText(p.plannedMinutes)}")
                             if (stop.note.isNotBlank()) Muted(stop.note)
+                            PlaceTickets(deps, trip, p, compact = true)
                             // Avisos solo del siguiente lugar (horario de hoy, comida, gente…), para no llenar la lista.
                             if (p == next?.second && day != null) {
                                 val idx = day.stops.indexOfFirst { it.placeId == p.id }

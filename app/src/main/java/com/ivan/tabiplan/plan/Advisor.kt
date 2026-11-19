@@ -41,7 +41,7 @@ object Advisor {
         val (dayStart, _) = trip.hoursFor(date)
         val out = mutableListOf<String>()
         fixed.firstOrNull()?.let { f ->
-            val hotel = hotelFor(trip, date)
+            val hotel = startHotelFor(trip, date)
             val t = f.fixedOn(date)!!
             val from = toMin(dayStart) + if (hotel != null && hotel.hasCoords && f.hasCoords) travelMinutes(hotel.ll(), f.ll()) else 0
             if (t < toMin(dayStart)) out += "${f.name} (${f.fixedTime}) es antes de que empiece tu día ($dayStart); cambia el horario del día si vas a salir antes."
@@ -126,7 +126,11 @@ object Advisor {
             "night" -> maxOf(sunset, toMin("17:30")).let { n -> if (arrive < n) out += Hint("🌃 Se disfruta más de noche (después de las ${fromMin(n)}).") }
             "morning" -> if (arrive > toMin("11:00")) out += Hint("🌅 Mejor temprano por la mañana.")
         }
-        if (info?.reservation == true) out += Hint("🎟️ Necesita reserva o boleto con horario.")
+        val tickets = trip.docsFor(p.id)
+        when {
+            tickets.isNotEmpty() -> out += Hint("🎟️ Boleto guardado en la app: " + tickets.joinToString { it.title } + ".")
+            p.needsTicket -> out += Hint("🎟️ Necesita boleto o reserva y aún no lo guardas en la app.", true)
+        }
 
         // Hora pico del transporte (y con maletas el día de llegada)
         val depart = arrive - s.wait - s.travelMinutes

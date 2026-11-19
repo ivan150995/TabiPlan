@@ -103,4 +103,25 @@ class PlannerTest {
         val ok = trip(a, b.copy(fixedTime = "13:00"))
         assertTrue(Advisor.conflicts(ok, "2026-11-16", ok.places).isEmpty())
     }
+
+    @Test fun hotelChangeDayStartsAtPreviousHotel() {
+        val hiroshima = Place(name = "Hotel Hiroshima", lat = 34.3925, lng = 132.4645, kind = PlaceKind.HOTEL, checkIn = "2024-09-14", checkOut = "2024-09-15")
+        val kyoto = Place(name = "Hotel Kioto", lat = 35.0154, lng = 135.7426, kind = PlaceKind.HOTEL, checkIn = "2024-09-15", checkOut = "2024-09-17")
+        val tour = Place(name = "Tour Kumamoto", lat = 32.7898, lng = 130.6886, minutes = 420, preferredDate = "2024-09-15", fixedTime = "10:00")
+        val t = Trip(name = "t", country = Country.JP, startDate = "2024-09-14", endDate = "2024-09-16", dayStart = "07:00", dayEnd = "23:30", places = listOf(hiroshima, kyoto, tour))
+        val day = Planner.plan(t).days.first { it.date == "2024-09-15" }
+        assertEquals(hiroshima.id, day.startPlaceId)
+        assertEquals("10:00", day.stops.first { it.placeId == tour.id }.arrive)
+        assertTrue(Advisor.conflicts(t, "2024-09-15", t.places).isEmpty())
+        // Kumamoto–Kioto en Shinkansen: unas 3 h 30 min, no 10 h.
+        val m = travelMinutes(tour.ll(), kyoto.ll())
+        assertTrue("Kumamoto–Kioto $m min", m in 180..300)
+    }
+
+    @Test fun requestedDinnerWaitsForDinnerTime() {
+        val dinner = Place(name = "Okonomiyaki", lat = 35.6950, lng = 139.7010, kind = PlaceKind.FOOD, meal = Meal.DINNER, minutes = 60, preferredDate = "2026-11-16")
+        val day = Planner.plan(trip(dinner)).days.first { it.date == "2026-11-16" }
+        val arrive = day.stops.first { it.placeId == dinner.id }.arrive
+        assertTrue("cena a las $arrive", arrive >= "17:00")
+    }
 }

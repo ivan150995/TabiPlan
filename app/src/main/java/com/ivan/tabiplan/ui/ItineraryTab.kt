@@ -66,7 +66,7 @@ import com.ivan.tabiplan.plan.Advisor
 import com.ivan.tabiplan.plan.Planner
 import com.ivan.tabiplan.plan.TravelCalendar
 import com.ivan.tabiplan.plan.fromMin
-import com.ivan.tabiplan.plan.hotelFor
+import com.ivan.tabiplan.plan.startHotelFor
 import com.ivan.tabiplan.plan.toMin
 import kotlinx.coroutines.launch
 
@@ -235,7 +235,7 @@ private fun DayCard(
 ) {
     val ctx = LocalContext.current
     val (s, e) = trip.hoursFor(day.date)
-    val hotel = trip.place(day.startPlaceId) ?: hotelFor(trip, day.date)
+    val hotel = trip.place(day.startPlaceId) ?: startHotelFor(trip, day.date)
     val isToday = day.date == java.time.LocalDate.now().toString()
     SectionCard(color = if (isToday) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -291,7 +291,7 @@ fun mapsAvailable(ctx: Context): Boolean =
 @Composable
 private fun DayMap(ctx: Context, trip: Trip, day: PlanDay) {
     val points = buildList {
-        (trip.place(day.startPlaceId) ?: hotelFor(trip, day.date))?.takeIf { it.hasCoords }?.let { add(it.name to LatLng(it.lat!!, it.lng!!)) }
+        (trip.place(day.startPlaceId) ?: startHotelFor(trip, day.date))?.takeIf { it.hasCoords }?.let { add(it.name to LatLng(it.lat!!, it.lng!!)) }
         day.stops.mapNotNull { trip.place(it.placeId) }.filter { it.hasCoords }.forEach { add(it.name to LatLng(it.lat!!, it.lng!!)) }
     }
     if (points.isEmpty()) { Muted("No hay lugares con ubicación este día."); return }

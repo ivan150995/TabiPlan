@@ -29,6 +29,7 @@ import com.ivan.tabiplan.data.Trip
 import com.ivan.tabiplan.data.objects
 import com.ivan.tabiplan.data.strings
 import com.ivan.tabiplan.plan.hotelFor
+import com.ivan.tabiplan.plan.startHotelFor
 import com.ivan.tabiplan.plan.tripDates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -48,6 +49,10 @@ data class HotelRequest(
     val tattooOk: Boolean = false,
     /** 0 = sin límite. En moneda local del viaje. */
     val maxPerNight: Int = 0,
+    /** Ciudad o zona de esta estancia (Tokio, Osaka…). */
+    val city: String = "",
+    /** Lugares que visitarás esos días: el hotel debe quedar cómodo para llegar a ellos. */
+    val nearPlaces: List<String> = emptyList(),
 )
 
 data class HotelSuggestion(
@@ -237,6 +242,7 @@ class TravelAi(private val settings: Settings) {
                     .put("gente", when (c?.crowdLevel) { 2 -> "muy alta"; 1 -> "alta"; else -> "normal" })
                     .put("atardecer", fromMin(TravelCalendar.sunset(trip.country, c?.date ?: java.time.LocalDate.now(), null, null)))
                     .put("hotel", hotelFor(trip, d)?.let { "${it.id}: ${it.name}" } ?: "")
+                    .put("saleDe", startHotelFor(trip, d)?.takeIf { it.id != hotelFor(trip, d)?.id }?.let { "${it.id}: ${it.name} (cambio de hotel: sales con maletas)" } ?: "")
             }))
             .put("lugares", JSONArray(places.map { p ->
                 JSONObject().put("id", p.id).put("nombre", p.name).put("tipo", p.kind.label)
@@ -259,7 +265,7 @@ class TravelAi(private val settings: Settings) {
             $data
 
             Reglas:
-            - Cada día empieza y termina en el hotel de esa noche (los hoteles no son paradas a visitar, salvo check-in/check-out si hace falta).
+            - Cada día empieza y termina en el hotel de esa noche (los hoteles no son paradas a visitar, salvo check-in/check-out si hace falta). Si el día trae "saleDe", ese día empieza en ese hotel (startPlaceId) y termina en el nuevo: cuenta el viaje entre ciudades y las maletas (casilleros o mandarlas con takkyūbin).
             - Respeta "desde"/"hasta" de cada día, los minutos que yo puse ("minutos"); si es null usa "minutosSugeridosIA" o tu mejor estimación.
             - "horaFija" + "diaPreferido": llega exactamente a esa hora ese día y acomoda lo demás alrededor. Solo si es imposible
               (el traslado desde la parada anterior más el tiempo que quiero estar ahí no caben) ponlo a la hora más cercana posible
@@ -307,7 +313,7 @@ class TravelAi(private val settings: Settings) {
             places.filter { it.kind != PlaceKind.HOTEL && it.id !in planned }.map { it.id }).distinct()
             .filter { it !in planned }
         // Días sin nada (la IA puede omitirlos): se agregan vacíos para que se vean.
-        val all = dates.map { date -> days.firstOrNull { it.date == date } ?: PlanDay(date, hotelFor(trip, date)?.id.orEmpty()) }
+        val all = dates.map { date -> days.firstOrNull { it.date == date } ?: PlanDay(date, startHotelFor(trip, date)?.id.orEmpty()) }
         return Itinerary(all, unassigned, j.optString("notes"), byAi = true, createdAt = System.currentTimeMillis())
     }
 
@@ -361,15 +367,18 @@ class TravelAi(private val settings: Settings) {
             if (request.maxPerNight > 0) add("precio por noche máximo ${request.maxPerNight} ${trip.country.currency} por habitación")
         }
         val dates = if (request.checkIn.isNotBlank()) "del ${request.checkIn} al ${request.checkOut}" else "en las fechas de mi viaje (${trip.startDate} a ${trip.endDate})"
+        val where = if (request.city.isNotBlank()) "en ${request.city} (${trip.country.label})" else "en ${trip.country.label}"
         val prompt = """
-            Busca hoteles reales en ${trip.country.label} $dates para ${trip.travelers} persona(s).
-            Lo que quiero: ${request.description}
+            Busca hoteles reales $where $dates para ${trip.travelers} persona(s).
+            ${if (request.description.isNotBlank()) "Lo que quiero: ${request.description}" else "Quiero un hotel bien ubicado para lo que voy a hacer."}
+            ${if (request.nearPlaces.isNotEmpty()) "Esos días visitaré: ${request.nearPlaces.joinToString()}. Que quede cómodo para llegar a ellos (pocas conexiones de tren)." else ""}
             ${if (filters.isNotEmpty()) "Filtros obligatorios:\n- " + filters.joinToString("\n- ") else ""}
 
             Usa búsqueda web (sitios oficiales de hoteles, Booking, Agoda, Japanican, Google Maps, reseñas recientes).
             Dame de 4 a 6 opciones que existan y estén operando, variadas en precio. Para cada una:
-            nombre exacto, ciudad y zona, por qué cumple lo que pedí, rango de precio por noche en moneda local,
-            estación más cercana y minutos caminando, qué tan friendly es para extranjeros, una pega o advertencia,
+            nombre exacto como aparece en Booking (para buscarlo ahí), ciudad y zona, por qué cumple lo que pedí,
+            rango de precio por noche en moneda local para esas fechas (temporada alta/baja, festivos), estación más cercana
+            y minutos caminando, qué tan friendly es para extranjeros, una pega o advertencia (p. ej. si suele agotarse),
             coordenadas aproximadas y la página oficial si la encuentras.
             Responde en español de México y termina SOLO con un bloque ```json con este formato:
             {"hotels":[{"name":"","city":"","area":"","why":"","pricePerNight":"","station":"","foreignFriendly":"","warning":"","lat":0,"lng":0,"website":""}],"advice":""}

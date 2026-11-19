@@ -159,12 +159,12 @@ fun PlacesTab(deps: AppDeps, nav: Nav, trip: Trip) {
             }
         }
         if (hotels.isNotEmpty()) item { Title("🏨 Hospedaje") }
-        items(hotels, key = { it.id }) { p -> PlaceCard(trip, p, p.id in busy, { research(p) }, { editing = p }, { deletePlace(deps, trip, p) }) }
+        items(hotels, key = { it.id }) { p -> PlaceCard(deps, trip, p, p.id in busy, { research(p) }, { editing = p }, { deletePlace(deps, trip, p) }) }
         item { Title("📍 Lugares (${others.size})") }
         if (others.isEmpty()) item {
             Muted("Agrega templos, barrios, museos, restaurantes, el aeropuerto… En cada uno decides cuánto tiempo quieres estar, o dejas que la IA lo investigue.")
         }
-        items(others, key = { it.id }) { p -> PlaceCard(trip, p, p.id in busy, { research(p) }, { editing = p }, { deletePlace(deps, trip, p) }) }
+        items(others, key = { it.id }) { p -> PlaceCard(deps, trip, p, p.id in busy, { research(p) }, { editing = p }, { deletePlace(deps, trip, p) }) }
         item { Spacer(Modifier.height(40.dp)) }
     }
     if (adding || editing != null) PlaceEditor(deps, trip, editing, onDismiss = { adding = false; editing = null }) { place, researchNow ->
@@ -199,12 +199,15 @@ private fun deletePlace(deps: AppDeps, trip: Trip, p: Place) {
                 days = t.itinerary.days.map { d -> d.copy(stops = d.stops.filterNot { it.placeId == p.id }) },
                 unassigned = t.itinerary.unassigned - p.id,
             ),
+            // Los boletos se quedan en Documentos; solo se desligan del lugar.
+            docs = t.docs.map { if (it.placeId == p.id) it.copy(placeId = "") else it },
+            stays = t.stays.map { if (it.hotelId == p.id) it.copy(hotelId = "") else it },
         )
     }
 }
 
 @Composable
-fun PlaceCard(trip: Trip, p: Place, loading: Boolean, onResearch: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
+fun PlaceCard(deps: AppDeps, trip: Trip, p: Place, loading: Boolean, onResearch: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     SectionCard(Modifier.clickable { open = !open }) {
@@ -233,6 +236,8 @@ fun PlaceCard(trip: Trip, p: Place, loading: Boolean, onResearch: () -> Unit, on
             if ((p.info?.crowd ?: 0) >= 3) Chip2("👥 Se llena", MaterialTheme.colorScheme.secondaryContainer)
             if (!p.hasCoords) Chip2("Sin ubicación", MaterialTheme.colorScheme.errorContainer)
         }
+        if (p.needsTicket && trip.docsFor(p.id).isEmpty()) Muted("🎟️ Necesita boleto: guárdalo aquí para tenerlo sin internet.", color = MaterialTheme.colorScheme.error)
+        PlaceTickets(deps, trip, p, compact = !open && !p.needsTicket)
         p.hours?.takeIf { it.known }?.let { h ->
             Muted("🕘 " + Hours.weekText(h) + when (h.source) { "google" -> " (Google)"; "ia" -> " (IA)"; else -> "" })
             if (h.closedDates.isNotEmpty()) Muted("🚫 Cerrado en tu viaje: " + h.closedDates.joinToString { prettyDate(it) }, color = MaterialTheme.colorScheme.error)
@@ -289,6 +294,7 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
     var fixedTime by remember { mutableStateOf(initial?.fixedTime ?: "") }
     var meal by remember { mutableStateOf(initial?.meal ?: Meal.ANY) }
+    var ticket by remember { mutableStateOf(initial?.ticket ?: false) }
     var hours by remember { mutableStateOf(initial?.hours) }
     var editHours by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<FoundPlace>>(emptyList()) }
@@ -300,7 +306,7 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
         mustVisit = must, preferredDate = if (kind == PlaceKind.HOTEL) "" else preferred,
         fixedTime = if (kind == PlaceKind.HOTEL || preferred.isBlank() || fixedTime.isBlank()) "" else normTime(fixedTime, ""),
         checkIn = if (kind == PlaceKind.HOTEL) checkIn else "", checkOut = if (kind == PlaceKind.HOTEL) checkOut else "",
-        notes = notes, meal = meal, hours = hours,
+        notes = notes, meal = meal, hours = hours, ticket = ticket && kind != PlaceKind.HOTEL,
     )
 
     AlertDialog(
@@ -364,6 +370,10 @@ fun PlaceEditor(deps: AppDeps, trip: Trip, initial: Place?, onDismiss: () -> Uni
                         Icon(if (must) Icons.Default.Star else Icons.Default.StarBorder, null, tint = MaterialTheme.colorScheme.primary)
                         HSpace(6); Text("Imprescindible")
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { ticket = !ticket }) {
+                        Checkbox(ticket, { ticket = it }); Text("Necesita boleto digital (QR, PDF…)")
+                    }
+                    if (ticket) Muted("Al guardar, toca \"Guardar boleto\" en la tarjeta del lugar para adjuntar la captura o el PDF.")
                     DateField("Día preferido (opcional)", preferred, { preferred = it }, allowClear = true)
                     if (preferred.isNotBlank()) {
                         OutlinedTextField(

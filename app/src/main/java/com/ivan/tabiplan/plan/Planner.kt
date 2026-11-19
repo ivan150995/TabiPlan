@@ -36,14 +36,27 @@ fun hotelFor(trip: Trip, date: String): Place? {
         ?: hotels.firstOrNull { it.checkIn.isEmpty() }
 }
 
+/**
+ * Hotel desde donde sale el día: el de la noche anterior si ese día cambias de hotel (sales con maletas
+ * y terminas en el nuevo); si no, el de esa noche.
+ */
+fun startHotelFor(trip: Trip, date: String): Place? {
+    val tonight = hotelFor(trip, date)
+    if (date <= trip.startDate) return tonight
+    val prev = runCatching { LocalDate.parse(date).minusDays(1).toString() }.getOrNull() ?: return tonight
+    return hotelFor(trip, prev)?.takeIf { it.id != tonight?.id && it.checkOut == date } ?: tonight
+}
+
 /** Minutos estimados de traslado entre dos puntos (sin Google). */
 fun travelMinutes(a: LatLngD, b: LatLngD): Int {
     val km = haversineKm(a, b) * 1.3
     return when {
         km <= 1.2 -> (km / 4.5 * 60).roundToInt().coerceAtLeast(3)
         km <= 15 -> (15 + km / 25 * 60).roundToInt()
-        // Trayectos largos (aeropuerto, otra ciudad): trenes rápidos.
-        else -> (25 + km / 60 * 60).roundToInt()
+        // Trayectos medianos (aeropuerto, Fuji, Nara): tren rápido o autobús.
+        km <= 100 -> (25 + km).roundToInt()
+        // Otra ciudad lejos (Tokio–Osaka, Kumamoto–Kioto): Shinkansen, ~240 km/h contando estaciones.
+        else -> (125 + (km - 100) / 4).roundToInt()
     }
 }
 
@@ -133,10 +146,12 @@ private class DaySim(
             if (strict && !ok) return null
         } else if (r != null) {
             val slot = r.firstOrNull { maxOf(arrive0, it.first) <= it.second }
-            if (slot == null || slot.first - arrive0 > 120) {
-                if (strict) return null
-                ok = false
-            } else arrive = maxOf(arrive0, slot.first)
+            when {
+                slot == null -> { if (strict) return null; ok = false }
+                // Al elegir no se esperan más de 2 h; si va porque lo pediste ese día, se espera a que abra o a la hora de comer.
+                slot.first - arrive0 > 120 && strict -> return null
+                else -> arrive = maxOf(arrive0, slot.first)
+            }
         }
         val leave = arrive + p.plannedMinutes
         if (strict && leave + back(p) > dayEnd) return null
@@ -205,7 +220,9 @@ object Planner {
             var clock = toMin(startS)
             var end = toMin(endS)
             var pos: LatLngD? = hotel?.ll()
-            var startPlace: Place? = hotel
+            // Día de cambio de hotel: se sale del hotel de la noche anterior (con maletas) y se termina en el nuevo.
+            var startPlace: Place? = startHotelFor(trip, date)
+            if (startPlace?.hasCoords == true) pos = startPlace!!.ll()
 
             // Día de llegada: el día empieza en el aeropuerto (migración, maletas) y no en el hotel.
             fun airportFor(d: String) = pending.firstOrNull { it.kind == PlaceKind.AIRPORT && it.preferredDate == d }

@@ -124,8 +124,12 @@ data class Place(
     val hours: OpenHours? = null,
     /** Solo lugares de comida. */
     val meal: Meal = Meal.ANY,
+    /** El usuario marcó que necesita boleto/entrada digital (QR, PDF…). */
+    val ticket: Boolean = false,
 ) {
     val hasCoords get() = lat != null && lng != null
+    /** Necesita boleto: lo marcaste tú o la IA encontró que requiere reserva. */
+    val needsTicket get() = ticket || info?.reservation == true
     /** Hora fija en minutos si aplica ese día. */
     fun fixedOn(date: String): Int? = if (fixedTime.isNotBlank() && preferredDate == date) {
         fixedTime.split(":").let { (it.getOrNull(0)?.toIntOrNull() ?: 0) * 60 + (it.getOrNull(1)?.toIntOrNull() ?: 0) }
@@ -146,7 +150,7 @@ data class Place(
         .putOpt("minutes", minutes).put("mustVisit", mustVisit).put("preferredDate", preferredDate).put("fixedTime", fixedTime)
         .put("checkIn", checkIn).put("checkOut", checkOut).put("notes", notes)
         .putOpt("info", info?.toJson()).put("completedAt", completedAt)
-        .putOpt("hours", hours?.toJson()).put("meal", meal.name)
+        .putOpt("hours", hours?.toJson()).put("meal", meal.name).put("ticket", ticket)
 
     companion object {
         fun fromJson(o: JSONObject) = Place(
@@ -167,6 +171,7 @@ data class Place(
             completedAt = o.optLong("completedAt"),
             hours = o.optJSONObject("hours")?.let { OpenHours.fromJson(it) },
             meal = enumOr(o.optString("meal"), Meal.ANY),
+            ticket = o.optBoolean("ticket"),
         )
     }
 }
@@ -254,21 +259,27 @@ data class TravelDoc(
     val notes: String = "",
     /** Archivos en filesDir/docs/. */
     val files: List<AttachedFile> = emptyList(),
+    /** Lugar al que pertenece (boleto de una atracción, reserva de un hotel…), o vacío. */
+    val placeId: String = "",
 ) {
     fun toJson() = JSONObject().put("id", id).put("kind", kind.name).put("title", title)
         .put("date", date).put("link", link).put("code", code).put("notes", notes)
-        .put("files", JSONArray(files.map { it.toJson() }))
+        .put("files", JSONArray(files.map { it.toJson() })).put("placeId", placeId)
 
     companion object {
         fun fromJson(o: JSONObject) = TravelDoc(
             o.getString("id"), enumOr(o.optString("kind"), DocKind.OTHER), o.optString("title"),
             o.optString("date"), o.optString("link"), o.optString("code"), o.optString("notes"),
             o.optJSONArray("files").objects().map { AttachedFile.fromJson(it) },
+            o.optString("placeId"),
         )
     }
 }
 
 data class AttachedFile(val fileName: String, val displayName: String, val mime: String) {
+    val isImage get() = mime.startsWith("image/")
+    val isPdf get() = mime == "application/pdf" || displayName.endsWith(".pdf", ignoreCase = true)
+
     fun toJson() = JSONObject().put("fileName", fileName).put("displayName", displayName).put("mime", mime)
 
     companion object {
@@ -297,6 +308,30 @@ data class CheckItem(
     }
 }
 
+/**
+ * Una parte del viaje en una ciudad, con su hotel: "Tokio 3 noches, luego Osaka 2…".
+ * [hotelId] es el hotel elegido (un Place de tipo HOTEL) o vacío.
+ */
+data class Stay(
+    val id: String = newId(),
+    val city: String,
+    val checkIn: String,
+    val checkOut: String,
+    /** Lo que buscas en esta estancia ("con vista al Fuji", "cerca de Dotonbori"). */
+    val wishes: String = "",
+    val hotelId: String = "",
+) {
+    val nights: Int
+        get() = runCatching { java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(checkIn), java.time.LocalDate.parse(checkOut)).toInt() }.getOrDefault(0)
+
+    fun toJson() = JSONObject().put("id", id).put("city", city).put("checkIn", checkIn).put("checkOut", checkOut)
+        .put("wishes", wishes).put("hotelId", hotelId)
+
+    companion object {
+        fun fromJson(o: JSONObject) = Stay(o.getString("id"), o.optString("city"), o.optString("checkIn"), o.optString("checkOut"), o.optString("wishes"), o.optString("hotelId"))
+    }
+}
+
 data class Trip(
     val id: String = newId(),
     val name: String,
@@ -312,8 +347,13 @@ data class Trip(
     val itinerary: Itinerary = Itinerary(),
     val docs: List<TravelDoc> = emptyList(),
     val checklist: List<CheckItem> = emptyList(),
+    /** Plan de hospedaje por ciudades. */
+    val stays: List<Stay> = emptyList(),
 ) {
     fun place(id: String) = places.firstOrNull { it.id == id }
+
+    /** Boletos / reservas guardados para un lugar. */
+    fun docsFor(placeId: String) = if (placeId.isBlank()) emptyList() else docs.filter { it.placeId == placeId }
 
     fun hoursFor(date: String): Pair<String, String> {
         val custom = dayHours[date]?.split("-")
@@ -329,6 +369,7 @@ data class Trip(
         .put("itinerary", itinerary.toJson())
         .put("docs", JSONArray(docs.map { it.toJson() }))
         .put("checklist", JSONArray(checklist.map { it.toJson() }))
+        .put("stays", JSONArray(stays.map { it.toJson() }))
 
     companion object {
         fun fromJson(o: JSONObject): Trip {
@@ -347,6 +388,7 @@ data class Trip(
                 itinerary = o.optJSONObject("itinerary")?.let { Itinerary.fromJson(it) } ?: Itinerary(),
                 docs = o.optJSONArray("docs").objects().map { TravelDoc.fromJson(it) },
                 checklist = o.optJSONArray("checklist").objects().map { CheckItem.fromJson(it) },
+                stays = o.optJSONArray("stays").objects().map { Stay.fromJson(it) },
             )
         }
     }

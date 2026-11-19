@@ -1,10 +1,10 @@
 package com.ivan.tabiplan.ui
 
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -26,6 +26,9 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -44,7 +47,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.ivan.tabiplan.AppDeps
 import com.ivan.tabiplan.Nav
 import com.ivan.tabiplan.Screen
@@ -53,6 +55,7 @@ import com.ivan.tabiplan.content.Guides
 import com.ivan.tabiplan.data.AttachedFile
 import com.ivan.tabiplan.data.CheckItem
 import com.ivan.tabiplan.data.DocKind
+import com.ivan.tabiplan.data.PlaceKind
 import com.ivan.tabiplan.data.TravelDoc
 import com.ivan.tabiplan.data.Trip
 
@@ -64,11 +67,12 @@ import com.ivan.tabiplan.data.Trip
 fun DocsTab(deps: AppDeps, trip: Trip) {
     var editing by remember { mutableStateOf<TravelDoc?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var viewing by remember { mutableStateOf<TravelDoc?>(null) }
     val ctx = LocalContext.current
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Button(onClick = { adding = true }) { Icon(Icons.Default.Add, null); HSpace(4); Text("Agregar documento") }
-            Muted("Guarda aquí boletos de avión, reservas de hotel, QR de Visit Japan Web, entradas a atracciones, seguro… Los archivos se copian dentro de la app y se ven sin internet.")
+            Muted("Guarda aquí boletos de avión, reservas de hotel, QR de Visit Japan Web, entradas a atracciones, seguro… Los archivos se copian dentro de la app y se ven sin internet. Liga cada boleto a su lugar para tenerlo a la mano en Hoy y en Lugares.")
         }
         DocKind.entries.forEach { kind ->
             val docs = trip.docs.filter { it.kind == kind }.sortedBy { it.date }
@@ -80,6 +84,7 @@ fun DocsTab(deps: AppDeps, trip: Trip) {
                             Column(Modifier.weight(1f)) {
                                 Text(d.title, fontWeight = FontWeight.SemiBold)
                                 if (d.date.isNotBlank()) Muted(prettyDate(d.date))
+                                trip.place(d.placeId)?.let { Muted("📍 ${it.name}") }
                                 if (d.code.isNotBlank()) Text("Código: ${d.code}", style = MaterialTheme.typography.bodyMedium)
                             }
                             IconButton(onClick = { editing = d }) { Icon(Icons.Default.Edit, "Editar") }
@@ -90,7 +95,7 @@ fun DocsTab(deps: AppDeps, trip: Trip) {
                             Text(d.link, color = MaterialTheme.colorScheme.secondary, maxLines = 1, style = MaterialTheme.typography.bodySmall)
                         }
                         d.files.forEach { f ->
-                            Row(Modifier.clickable { openFile(ctx, deps, f) }, verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.clickable { if (f.isImage || f.isPdf) viewing = d else openFile(ctx, deps, f) }, verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.AttachFile, null); HSpace(4); Text(f.displayName, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
@@ -100,28 +105,23 @@ fun DocsTab(deps: AppDeps, trip: Trip) {
         }
         item { Spacer(Modifier.height(40.dp)) }
     }
-    if (adding || editing != null) DocEditor(deps, editing, onDismiss = { adding = false; editing = null }, onDelete = { d ->
+    viewing?.let { d -> TicketViewer(deps, d) { viewing = null } }
+    if (adding || editing != null) DocEditor(deps, trip, editing, editing == null, onDismiss = { adding = false; editing = null }, onDelete = { d ->
         d.files.forEach { deps.store.deleteFile(it) }
         deps.store.update(trip.id) { t -> t.copy(docs = t.docs.filterNot { it.id == d.id }, checklist = t.checklist.map { if (it.docId == d.id) it.copy(docId = "") else it }) }
         editing = null
     }) { d ->
-        deps.store.update(trip.id) { t ->
-            if (t.docs.any { it.id == d.id }) t.copy(docs = t.docs.map { if (it.id == d.id) d else it }) else t.copy(docs = t.docs + d)
-        }
+        saveDoc(deps, trip, d)
         adding = false; editing = null
     }
 }
 
-private fun openFile(ctx: android.content.Context, deps: AppDeps, f: AttachedFile) {
-    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", deps.store.fileOf(f))
-    val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, f.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { ctx.startActivity(i) }.onFailure { ctx.toast("No hay una app para abrir ${f.displayName}") }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DocEditor(deps: AppDeps, initial: TravelDoc?, onDismiss: () -> Unit, onDelete: (TravelDoc) -> Unit, onSave: (TravelDoc) -> Unit) {
+fun DocEditor(deps: AppDeps, trip: Trip, initial: TravelDoc?, isNew: Boolean, onDismiss: () -> Unit, onDelete: (TravelDoc) -> Unit, onSave: (TravelDoc) -> Unit) {
     val ctx = LocalContext.current
+    var placeId by remember { mutableStateOf(initial?.placeId ?: "") }
+    var choosingPlace by remember { mutableStateOf(false) }
     var kind by remember { mutableStateOf(initial?.kind ?: DocKind.FLIGHT) }
     var title by remember { mutableStateOf(initial?.title ?: "") }
     var date by remember { mutableStateOf(initial?.date ?: "") }
@@ -135,7 +135,7 @@ private fun DocEditor(deps: AppDeps, initial: TravelDoc?, onDismiss: () -> Unit,
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "Nuevo documento" else "Editar documento") },
+        title = { Text(if (isNew) "Nuevo documento" else "Editar documento") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -146,6 +146,20 @@ private fun DocEditor(deps: AppDeps, initial: TravelDoc?, onDismiss: () -> Unit,
                 OutlinedTextField(code, { code = it }, label = { Text("Código de reserva / folio") }, singleLine = true)
                 OutlinedTextField(link, { link = it.trim() }, label = { Text("Enlace (reserva, permiso en línea…)") }, singleLine = true)
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notas") })
+                Box {
+                    OutlinedButton(onClick = { choosingPlace = true }) {
+                        Text("📍 " + (trip.place(placeId)?.name ?: "Ligar a un lugar (opcional)"), maxLines = 1)
+                    }
+                    DropdownMenu(choosingPlace, { choosingPlace = false }) {
+                        DropdownMenuItem(text = { Text("Ninguno") }, onClick = { placeId = ""; choosingPlace = false })
+                        trip.places.sortedBy { it.kind != PlaceKind.HOTEL }.forEach { p ->
+                            DropdownMenuItem(text = { Text((if (p.kind == PlaceKind.HOTEL) "🏨 " else "") + p.name) }, onClick = {
+                                placeId = p.id; choosingPlace = false
+                                if (title.isBlank()) title = p.name
+                            })
+                        }
+                    }
+                }
                 files.forEach { f ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.AttachFile, null); Text(f.displayName, Modifier.weight(1f))
@@ -153,15 +167,16 @@ private fun DocEditor(deps: AppDeps, initial: TravelDoc?, onDismiss: () -> Unit,
                     }
                 }
                 TextButton(onClick = { picker.launch(arrayOf("application/pdf", "image/*", "*/*")) }) {
-                    Icon(Icons.Default.AttachFile, null); HSpace(4); Text("Adjuntar PDF o imagen")
+                    Icon(Icons.Default.AttachFile, null); HSpace(4); Text("Adjuntar PDF o imagen (QR, captura…)")
                 }
-                if (initial != null) TextButton(onClick = { onDelete(initial) }) { Text("Borrar documento", color = MaterialTheme.colorScheme.error) }
+                if (files.isEmpty()) Muted("Tip: si el boleto te llegó por correo o en la app de la atracción, haz captura del QR o descarga el PDF y adjúntalo aquí.")
+                if (!isNew && initial != null) TextButton(onClick = { onDelete(initial) }) { Text("Borrar documento", color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             TextButton(enabled = title.isNotBlank(), onClick = {
                 removed.forEach { deps.store.deleteFile(it) }
-                onSave((initial ?: TravelDoc(title = title)).copy(kind = kind, title = title.trim(), date = date, link = link, code = code, notes = notes, files = files))
+                onSave((initial ?: TravelDoc(title = title)).copy(kind = kind, title = title.trim(), date = date, link = link, code = code, notes = notes, files = files, placeId = placeId))
             }) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },

@@ -7,7 +7,9 @@ App de Android para planear viajes a **Japón** y **México**, hecha para uso pe
 - Pestaña **Hoy**: marcas un lugar como visitado y te dice cómo llegar al siguiente (caminando, tren/metro/autobús, taxi, Uber, DiDi o GO) con precio aproximado de cada opción.
 - Guías ilustradas: llegar a Narita/Haneda, Suica/PASMO, máquinas de boletos, Shinkansen, taxis, dinero, etiqueta.
 - Checklist para viajar de México a Japón y documentos del viaje (boletos, reservas, QR) guardados en la app.
-- Búsqueda de hoteles por descripción con IA, con filtro de hoteles friendly para extranjeros.
+- Boletos digitales por lugar: marcas que un lugar necesita boleto y le adjuntas el PDF o la captura del QR. Se ve dentro de la app sin internet, a pantalla completa y con el brillo al máximo, desde Lugares, Hoy o Documentos.
+- Plan de hospedaje por ciudades (p. ej. Tokio → Osaka → Kioto → Tokio): eliges las noches de cada estancia y las siguientes se recorren solas; avisa de noches sin hotel o con dos. Para cada estancia la IA busca hoteles según lo que describes y lo que visitas esos días (filtro friendly para extranjeros, cerca de estación, etc.).
+- Precio y disponibilidad reales en **Booking** (abre la app si la tienes) y Google Hoteles, con las fechas y personas del viaje ya puestas. Booking no tiene una API pública para apps personales (su Demand API es solo para socios afiliados aprobados), así que la app usa enlaces de búsqueda.
 
 ## Claves
 
